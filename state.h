@@ -29,6 +29,7 @@ extern volatile bool monitoring;
 
 // Safety State
 extern double currentStepPeak; 
+extern double stepStartTemp;
 
 // Profile State
 extern const Profile* activeProfilePtr;

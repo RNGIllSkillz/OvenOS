@@ -1,5 +1,5 @@
 // ============================================================
-//  CGF PID Oven Controller — OvenOS v2.5 
+//  CGF PID Oven Controller — OvenOS v3.0 
 // ============================================================
 #include <WiFi.h>
 #include <esp_task_wdt.h>
@@ -52,6 +52,7 @@ uint32_t windowStartTime = 0;
 
 // Safety State
 double currentStepPeak = 0.0;
+double stepStartTemp = 0.0;
 
 // Mutex Definition
 SemaphoreHandle_t dataMutex;

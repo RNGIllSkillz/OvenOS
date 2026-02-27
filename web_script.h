@@ -4,19 +4,22 @@
 const char PAGE_JS[] PROGMEM = R"rawliteral(
 const AUTH_TOKEN = "oven2026";
 var CUSTOM_PROF_IDX = 999;
-var profileCache = [];
+var profileCache =[];
 
 var mode = "manual";
+var graphMode = "live"; 
 var prevMsg = "";
 var prevStep = -1;
-var histTemps = [], histSPs = [], histTS = [];
-var liveTemps = [], liveSPs = [], liveTS = [];
+
+var histTemps =[], histSPs =[], histTS = [];
+var liveTemps = [], liveSPs = [], liveTS =[];
 var liveStartWall = 0;
-var LIVE_MAX = 3600; 
+var LIVE_MAX = 36000; 
 var statusPending = false;
 var historyPending = false;
 var statusTimer = null;
 var historyTimer = null;
+
 var chartScale = 600;
 var canvas = document.getElementById("chart");
 var ctx = canvas.getContext("2d");
@@ -65,16 +68,64 @@ function addLog(msg, cls) {
 
 function setScale(sec) {
   chartScale = validateNumber(sec, 0, 86400, 600);
-  document.querySelectorAll(".sbtn").forEach(function(b) {
+  document.querySelectorAll(".tscale").forEach(function(b) {
     b.classList.toggle("on", +b.dataset.val === chartScale);
   });
   drawChart();
 }
 
+function setGraphMode(m) {
+  graphMode = m;
+  document.getElementById("btnGLive").classList.toggle("on", m === 'live');
+  document.getElementById("btnGHist").classList.toggle("on", m === 'hist');
+  drawChart();
+}
+
+function syncLiveGraph() {
+  if (histTS.length === 0) {
+    addLog("Архив пуст. Синхронизация невозможна.", "warn");
+    return;
+  }
+  
+  var cutoff = liveTS.length > 0 ? liveTS[0] : Infinity;
+  var added = 0;
+  var newTS =[], newTemps = [], newSPs =[];
+  
+  // Extract historical points strictly older than our Live graph's earliest point
+  for (var i = 0; i < histTS.length; i++) {
+    if (histTS[i] < cutoff) {
+      newTS.push(histTS[i]);
+      newTemps.push(histTemps[i]);
+      newSPs.push(histSPs[i]);
+      added++;
+    }
+  }
+  
+  if (added > 0) {
+    // Prepend historical points to Live arrays
+    liveTS = newTS.concat(liveTS);
+    liveTemps = newTemps.concat(liveTemps);
+    liveSPs = newSPs.concat(liveSPs);
+    
+    // Safety memory limit crop
+    if (liveTS.length > LIVE_MAX) {
+      var excess = liveTS.length - LIVE_MAX;
+      liveTS = liveTS.slice(excess);
+      liveTemps = liveTemps.slice(excess);
+      liveSPs = liveSPs.slice(excess);
+    }
+    
+    addLog("Добавлено " + added + " точек из архива в Live", "success");
+    if (graphMode === "live") drawChart();
+  } else {
+    addLog("Live график уже содержит все архивные данные", "ev");
+  }
+}
+
 function drawChart() {
-  var container = canvas.parentElement;
-  var W = container.clientWidth - 44;
-  var H = container.clientHeight - 50; 
+  var wrap = document.getElementById("canvasWrap");
+  var W = wrap.clientWidth;
+  var H = wrap.clientHeight; 
   if (W < 10) W = canvas.offsetWidth;
   if (H < 10) H = 220;
 
@@ -89,45 +140,31 @@ function drawChart() {
   ctx.fillStyle = "#0d0f10";
   ctx.fillRect(0, 0, W, H);
 
-  var mergedTemps = [], mergedSPs = [], mergedTS = [];
-  var liveOffset = liveTS.length > 0 ? liveTS[0] : Infinity;
-  
-  for (var mi = 0; mi < histTS.length; mi++) {
-    if (histTS[mi] < liveOffset - 1) { 
-      mergedTemps.push(histTemps[mi]);
-      mergedSPs.push(histSPs[mi]);
-      mergedTS.push(histTS[mi]);
-    }
-  }
-  
-  for (var li = 0; li < liveTS.length; li++) {
-    mergedTemps.push(liveTemps[li]);
-    mergedSPs.push(liveSPs[li]);
-    mergedTS.push(liveTS[li]);
-  }
+  var allTemps = graphMode === "live" ? liveTemps : histTemps;
+  var allSPs   = graphMode === "live" ? liveSPs   : histSPs;
+  var allTS    = graphMode === "live" ? liveTS    : histTS;
 
-  var visTemps, visSPs, visTS;
-  var allTS = mergedTS;
-  
   if (allTS.length === 0) {
     ctx.fillStyle = "#4a5058"; 
     ctx.font = "13px 'Share Tech Mono'";
     ctx.textAlign = "center";
-    ctx.fillText("Ожидание данных...", W/2, H/2);
+    ctx.fillText(graphMode === "live" ? "Ожидание потока..." : "Ожидание архива...", W/2, H/2);
     return;
   }
   
+  var visTemps, visSPs, visTS;
+  
   if (chartScale === 0) {
-    visTemps = mergedTemps; visSPs = mergedSPs; visTS = mergedTS;
+    visTemps = allTemps; visSPs = allSPs; visTS = allTS;
   } else {
     var tCutoff = allTS[allTS.length-1] - chartScale;
     var startIdx = 0;
     for (var si = 0; si < allTS.length; si++) {
       if (allTS[si] >= tCutoff) { startIdx = si; break; }
     }
-    visTemps = mergedTemps.slice(startIdx);
-    visSPs = mergedSPs.slice(startIdx);
-    visTS = mergedTS.slice(startIdx);
+    visTemps = allTemps.slice(startIdx);
+    visSPs = allSPs.slice(startIdx);
+    visTS = allTS.slice(startIdx);
   }
 
   if (visTS.length < 2) return;
@@ -308,7 +345,7 @@ function addCustomStep(label, temp, hold) {
 
 function getCustomSteps() {
   var rows = document.getElementById("stepList").querySelectorAll(".step-row");
-  var steps = [];
+  var steps =[];
   for (var i=0; i<rows.length; i++) {
     var inputs = rows[i].querySelectorAll("input");
     if (inputs.length < 3) continue;
@@ -334,9 +371,9 @@ function doStart() {
   fd.append("token", AUTH_TOKEN);
   
   setRunning(true);
-  histTemps = []; histSPs = []; histTS = [];
-  liveTemps = []; liveSPs = []; liveTS = [];
-  liveStartWall = Date.now();
+  histTemps = []; histSPs = []; histTS =[];
+  liveTemps = []; liveSPs =[]; liveTS =[];
+  liveStartWall = 0; // Will cleanly resync with ESP on next poll
   drawChart();
 
   if (mode === "manual") {
@@ -443,7 +480,7 @@ function doReset() {
 var failCount = 0;
 function scheduleStatus(delay) {
   clearTimeout(statusTimer);
-  statusTimer = setTimeout(pollStatus, Math.max(1500, delay)); 
+  statusTimer = setTimeout(pollStatus, Math.max(2000, delay)); 
 }
 
 function pollStatus() {
@@ -451,7 +488,7 @@ function pollStatus() {
   statusPending = true;
   var t0 = Date.now();
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 3000); 
+  const timeoutId = setTimeout(() => controller.abort(), 5000); 
 
   fetch("/status", { signal: controller.signal })
     .then(r => { clearTimeout(timeoutId); return r.json(); })
@@ -497,22 +534,38 @@ function pollStatus() {
       btnMon.disabled = d.running;
 
       var temp = validateNumber(d.temp, -50, 500, 0);
+      var sp = d.setpoint ? validateNumber(d.setpoint, 0, 300, 0) : 0;
       var el = document.getElementById("curT");
       el.textContent = temp.toFixed(1);
       el.className = "tbig "+(temp>150?"hot":temp<40?"cool":"");
 
-      if (d.running) {
-        if (liveStartWall === 0) liveStartWall = Date.now() - validateNumber(d.elapsed, 0, 86400000, 0) * 1000;
-        if (liveStartWall === 0) liveStartWall = Date.now();
-        var liveNow = (Date.now() - liveStartWall) / 1000;
-        if (liveTS.length === 0 || liveNow - liveTS[liveTS.length-1] >= 1) {
-           liveTemps.push(temp); liveSPs.push(validateNumber(d.setpoint, 0, 300, 0)); liveTS.push(liveNow);
-           if (liveTS.length > LIVE_MAX) { liveTemps.shift(); liveSPs.shift(); liveTS.shift(); }
-           drawChart();
+      // --- CRITICAL TIME SYNCHRONIZATION ---
+      // Align the browser's live timeline precisely with the ESP32's actual elapsed time
+      var elapsed = validateNumber(d.elapsed, 0, 86400000, 0);
+      if (liveStartWall === 0) {
+        liveStartWall = Date.now() - (elapsed * 1000);
+      } else {
+        var expectedLive = (Date.now() - liveStartWall) / 1000;
+        // If our browser clock drifted or the controller started a new run (resetting elapsed to 0)
+        if (Math.abs(expectedLive - elapsed) > 5) {
+          liveStartWall = Date.now() - (elapsed * 1000);
+          // If the ESP32 time went backwards compared to our chart, it's a new run. Clear graph.
+          if (elapsed < expectedLive && liveTS.length > 0 && elapsed < liveTS[liveTS.length-1]) {
+             liveTS = []; liveTemps = []; liveSPs =[];
+          }
         }
       }
 
-      var sp = d.setpoint ? validateNumber(d.setpoint, 0, 300, 0) : 0;
+      var liveNow = (Date.now() - liveStartWall) / 1000;
+      // Push the data to the live graph
+      if (liveTS.length === 0 || liveNow > liveTS[liveTS.length-1]) {
+         liveTemps.push(temp); 
+         liveSPs.push(sp); 
+         liveTS.push(liveNow);
+         if (liveTS.length > LIVE_MAX) { liveTemps.shift(); liveSPs.shift(); liveTS.shift(); }
+         if (graphMode === "live") drawChart();
+      }
+
       document.getElementById("spV").textContent = sp ? sp.toFixed(0) : "---";
 
       var pill = document.getElementById("pill");
@@ -520,7 +573,7 @@ function pollStatus() {
       pill.textContent = msg; pill.className = "pill";
       if (/НАГРЕВ|СТАБИЛ|Сушка|Отжиг|Оплавление|Выдержка|Преднагрев|Пред/.test(msg)) pill.classList.add("heat");
       else if (/ПОДДЕРЖКА|ЗАВЕРШЕН|КОНЕЦ/.test(msg)) pill.classList.add("hold");
-      else if (/АВАРИЯ|ОСТАНОВКА|TIMEOUT|FAULT|SPIKE|OVERHEAT|ПАДЕНИЕ/.test(msg)) pill.classList.add("err");
+      else if (/АВАРИЯ|ОСТАНОВКА|TIMEOUT|FAULT|SPIKE|OVERHEAT|ПАДЕНИЕ|РАЗГОН/.test(msg)) pill.classList.add("err");
 
       if(!d.emergency) setRunning(d.running);
 
@@ -554,7 +607,7 @@ function pollStatus() {
 
       if (msg !== prevMsg) { 
         var logCls = "ev";
-        if (/АВАРИЯ|TIMEOUT|FAULT|SPIKE|OVERHEAT|ПАДЕНИЕ/.test(msg)) logCls = "err";
+        if (/АВАРИЯ|TIMEOUT|FAULT|SPIKE|OVERHEAT|ПАДЕНИЕ|РАЗГОН/.test(msg)) logCls = "err";
         else if (/ПОДДЕРЖКА|ЗАВЕРШЕН|КОНЕЦ|ГОТОВО/.test(msg)) logCls = "success";
         addLog("Состояние: "+msg, logCls); prevMsg = msg; 
       }
@@ -564,13 +617,14 @@ function pollStatus() {
          if (document.activeElement.id !== "pidKi") document.getElementById("pidKi").value = d.ki;
          if (document.activeElement.id !== "pidKd") document.getElementById("pidKd").value = d.kd;
       }
-      var elapsed = Date.now() - t0;
-      scheduleStatus(elapsed > 800 ? 2000 : 1000);
+      
+      var elapsedDraw = Date.now() - t0;
+      scheduleStatus(elapsedDraw > 800 ? 3000 : 2000);
     })
     .catch(() => {
       statusPending = false; failCount++;
       if (failCount > 3) { document.getElementById("badge").textContent = "* ПОМЕРЛО"; document.getElementById("badge").className = ""; }
-      scheduleStatus(3000);
+      scheduleStatus(3000); 
     });
 }
 
@@ -580,9 +634,6 @@ function scheduleHistory(delay) {
 }
 
 function toggleMonitor() {
-  // Determine current state based on button class or data, but easier to just ask for toggle logic
-  // We'll rely on the visual state to decide what to send, or store a var.
-  // Best approach: Read the button's current active state.
   var btn = document.getElementById("btnMon");
   var isMon = btn.classList.contains("mon-active");
   var newState = isMon ? "0" : "1";
@@ -594,12 +645,10 @@ function toggleMonitor() {
   fetch("/monitor", {method:"POST", body:fd})
     .then(r => {
         if(r.ok) {
-            // Optimistic update
             if(newState==="1") {
                 addLog("Мониторинг запущен", "ev");
-                // Reset chart vars locally to match server reset
                 histTemps=[]; histSPs=[]; histTS=[]; liveTemps=[]; liveSPs=[]; liveTS=[];
-                liveStartWall = Date.now();
+                liveStartWall = 0; // Let pollStatus resync cleanly
             } else {
                 addLog("Мониторинг остановлен", "ev");
             }
@@ -608,33 +657,30 @@ function toggleMonitor() {
 }
 
 function pollHistory() {
-  if (historyPending) { scheduleHistory(10000); return; }
+  if (historyPending) { scheduleHistory(30000); return; }
   historyPending = true;
   fetch("/history")
     .then(r => r.json())
     .then(d => {
       historyPending = false;
       if (d.ts && Array.isArray(d.ts) && d.ts.length > 0) {
-        var cutoff = liveTS.length > 0 ? liveTS[0] : Infinity;
-        histTemps = []; histSPs = []; histTS = [];
+        histTemps = []; histSPs =[]; histTS =[];
         for (var hi = 0; hi < d.ts.length; hi++) {
-          if (d.ts[hi] < cutoff || liveTS.length === 0) {
-            histTemps.push(validateNumber(d.temps[hi], -50, 500, 0));
-            histSPs.push(validateNumber(d.sps[hi], 0, 300, 0));
-            histTS.push(validateNumber(d.ts[hi], 0, 86400000, 0));
-          }
+          histTemps.push(validateNumber(d.temps[hi], -50, 500, 0));
+          histSPs.push(validateNumber(d.sps[hi], 0, 300, 0));
+          histTS.push(validateNumber(d.ts[hi], 0, 86400000, 0));
         }
-        drawChart();
+        if (graphMode === "hist") drawChart();
       }
-      scheduleHistory(60000);
+      scheduleHistory(30000); 
     })
-    .catch(() => { historyPending = false; scheduleHistory(60000); });
+    .catch(() => { historyPending = false; scheduleHistory(30000); });
 }
 
 // --- INITIALIZATION ---
 window.addEventListener("resize", drawChart);
 scheduleStatus(1000);
-scheduleHistory(5000);
+scheduleHistory(1000); 
 setTimeout(drawChart, 200);
 loadProfiles();
 

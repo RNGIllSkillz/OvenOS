@@ -119,15 +119,24 @@ const char PAGE_HTML[] PROGMEM = R"rawliteral(
   <div class="right">
     <div class="pane chart-pane">
       <div class="chart-header">
-        <span class="plabel" style="margin:0;padding:0;border:none">График температуры</span>
+        <div style="display:flex; align-items:center; gap:12px;">
+          <span class="plabel" style="margin:0;padding:0;border:none">График</span>
+          <div class="scale-btns">
+            <button class="sbtn gmode on" id="btnGLive" onclick="setGraphMode('live')">Live</button>
+            <button class="sbtn gmode" id="btnGHist" onclick="setGraphMode('hist')">Архив</button>
+            <button class="sbtn gmode" onclick="syncLiveGraph()" title="Синхронизировать Live с архивом">&#8635; Sync</button>
+          </div>
+        </div>
         <div class="scale-btns">
-          <button class="sbtn on" onclick="setScale(600)" data-val="600">10м</button>
-          <button class="sbtn" onclick="setScale(1800)" data-val="1800">30м</button>
-          <button class="sbtn" onclick="setScale(3600)" data-val="3600">1ч</button>
-          <button class="sbtn" onclick="setScale(0)" data-val="0">Всё</button>
+          <button class="sbtn tscale on" onclick="setScale(600)" data-val="600">10м</button>
+          <button class="sbtn tscale" onclick="setScale(1800)" data-val="1800">30м</button>
+          <button class="sbtn tscale" onclick="setScale(3600)" data-val="3600">1ч</button>
+          <button class="sbtn tscale" onclick="setScale(0)" data-val="0">Всё</button>
         </div>
       </div>
-      <canvas id="chart" height="220"></canvas>
+      <div id="canvasWrap" style="flex:1; position:relative; min-height:0; width:100%;">
+        <canvas id="chart" style="position:absolute; top:0; left:0; width:100%; height:100%;"></canvas>
+      </div>
     </div>
 
     <div class="pane log-pane">

@@ -77,8 +77,10 @@ void beginStep(int step) {
     timerActive = false;
     stabStart = 0;
     procStart = 0;
+    heatStartTime = 0;
     finished = false;
     currentStepPeak = Input; 
+    stepStartTemp = Input; 
     
     // Protected Write
     if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
@@ -113,6 +115,7 @@ void resetRunState() {
     fullPowerStartTime = 0; 
     
     currentStepPeak = 0; 
+    stepStartTemp = 0;
     runawayBaselineTemp = 0; 
     
     digitalWrite(PIN_SSR, LOW);
@@ -202,14 +205,16 @@ void runControlLoop() {
             return;
         }
 
-        // Only check drop if NOT cooling
+        // Only check drop if NOT cooling AND we are stabilizing/climbing
         if (!timerActive) {
-            if (Input > currentStepPeak) currentStepPeak = Input;
-            
-            // Only trigger if we are actively trying to heat (Input < Setpoint)
-            if (Input < Setpoint && currentStepPeak > 40 && Input < (currentStepPeak - 5.0)) {
-                emergencyStop("ПАДЕНИЕ ТЕМП."); 
-                return;
+            if (Setpoint >= stepStartTemp) {
+                if (Input > currentStepPeak) currentStepPeak = Input;
+                
+                // Only trigger if we are actively trying to heat (Input < Setpoint)
+                if (Input < Setpoint && currentStepPeak > 40 && Input < (currentStepPeak - 5.0)) {
+                    emergencyStop("ПАДЕНИЕ ТЕМП."); 
+                    return;
+                }
             }
         }
     }
@@ -254,20 +259,26 @@ void runControlLoop() {
     else digitalWrite(PIN_SSR, LOW);
 
     // Thermal Runaway
-    if (Output >= PID_WINDOW_SIZE - 10) { 
+    if (Output >= PID_WINDOW_SIZE * 0.9) { 
         if (fullPowerStartTime == 0) {
             fullPowerStartTime = now;
             runawayBaselineTemp = Input;
             runawayBaselineTime = now;
         }
         else if (now - fullPowerStartTime > RUNAWAY_TIMEOUT_MS) {
-            // Check delta over the last 3 minutes, not just 1 tick
-            if (Input < (Setpoint - 10) && (Input - runawayBaselineTemp) < 5.0) {
-                 emergencyStop("ТЕПЛОВОЙ РАЗГОН");
-                 return;
+            if (Input < (Setpoint - 10)) {
+                // Check delta over the last 3 minutes
+                if ((Input - runawayBaselineTemp) < 5.0) {
+                     emergencyStop("ТЕПЛОВОЙ РАЗГОН");
+                     return;
+                } else {
+                     // Successfully rose enough; reset baseline for the next 3 mins!
+                     runawayBaselineTemp = Input;
+                     fullPowerStartTime = now; 
+                }
             }
         }
-    } else {
+    } else if (Output < PID_WINDOW_SIZE * 0.5) {
         fullPowerStartTime = 0;
     }
 
@@ -285,7 +296,7 @@ void runControlLoop() {
             else if (now - stabStart >= STABLE_REQUIRED_TIME) {
                 timerActive = true; 
                 procStart = now; 
-                heatStartTime = now;
+                heatStartTime = 0;
                 currentStepPeak = Input; 
                 if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
                     strncpy(statusMsg, "ПОДДЕРЖКА", 63);
@@ -294,7 +305,6 @@ void runControlLoop() {
             }
         } else {
             stabStart = 0;
-            // Status msg is set in beginStep, no need to spam here
         }
     } else {
         if ((now - procStart)/1000 >= holdMin*60) {

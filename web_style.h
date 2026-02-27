@@ -99,6 +99,7 @@ canvas{display:block;width:100%;flex:1}
 .sbtn{padding:3px 10px;background:transparent;border:1px solid var(--bdr);color:var(--mut);font-family:var(--mono);font-size:.7rem;border-radius:2px;cursor:pointer;transition:all .2s}
 .sbtn:hover{border-color:var(--amb);color:var(--amb)}
 .sbtn.on{background:var(--amb);border-color:var(--amb);color:#000}
+.gmode.on { background:#252a2e; border-color:#252a2e; color:var(--txt); }
 .log-pane{background:var(--sur);padding:18px 22px}
 .logbox{font-family:var(--mono);font-size:.7rem;color:var(--mut);max-height:120px;overflow-y:auto}
 .le{padding:2px 0;border-bottom:1px solid #1a1e21}

@@ -7,8 +7,6 @@
 #include "webpage.h"
 #include "favicon.h"
 
-static HistoryBuffer historySnapshot;
-
 // Helper to check token for protected endpoints
 bool checkToken(AsyncWebServerRequest *request) {
     if (request->hasArg("token") && request->arg("token") == API_TOKEN) {
@@ -20,19 +18,19 @@ bool checkToken(AsyncWebServerRequest *request) {
 
 void registerAPI() {
     // 1. ROOT PAGE
-    server.on("/", HTTP_GET, [](AsyncWebServerRequest *request){
+    server.on("/", HTTP_GET,[](AsyncWebServerRequest *request){
         request->send_P(200, "text/html", PAGE_HTML);
     });
 
-    server.on("/style.css", HTTP_GET, [](AsyncWebServerRequest *request){
+    server.on("/style.css", HTTP_GET,[](AsyncWebServerRequest *request){
         request->send_P(200, "text/css", PAGE_CSS);
     });
 
-    server.on("/script.js", HTTP_GET, [](AsyncWebServerRequest *request){
+    server.on("/script.js", HTTP_GET,[](AsyncWebServerRequest *request){
         request->send_P(200, "application/javascript", PAGE_JS);
     });
 
-    server.on("/favicon.ico", HTTP_GET, [](AsyncWebServerRequest *request){
+    server.on("/favicon.ico", HTTP_GET,[](AsyncWebServerRequest *request){
         request->send_P(200, "image/x-icon", (const uint8_t*)favicon_ico, favicon_ico_len);
     });
 
@@ -54,6 +52,7 @@ void registerAPI() {
         
         if (activeProfilePtr && profMode) {
             strncpy(profNameBuf, activeProfilePtr->name, 32);
+            profNameBuf[32] = '\0';
         }
 
         long timeLeft = 0;
@@ -97,50 +96,53 @@ void registerAPI() {
     });
 
     // 4. HISTORY 
-    server.on("/history", HTTP_GET, [](AsyncWebServerRequest *request){
-        
-        if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(20)) == pdTRUE) {
-            historySnapshot = history; 
-            xSemaphoreGive(dataMutex);
-        } else {
-            // If mutex is stuck (rare), we send the stale snapshot 
-            // rather than failing or blocking indefinitely.
-            // This is safer for the oven control loop.
+    server.on("/history", HTTP_GET,[](AsyncWebServerRequest *request){
+        // Allocate dynamically to prevent race condition across multiple clients/requests
+        HistoryBuffer* snap = new (std::nothrow) HistoryBuffer();
+        if (!snap) {
+            request->send(500, "text/plain", "OOM");
+            return;
         }
 
+        if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(20)) == pdTRUE) {
+            *snap = history; 
+            xSemaphoreGive(dataMutex);
+        } 
+
         AsyncResponseStream *response = request->beginResponseStream("application/json");
-        
         response->print("{\"ts\":[");
         
-        int cnt = historySnapshot.count;
-        int base = (historySnapshot.head - cnt + HIST_SIZE) % HIST_SIZE;
+        int cnt = snap->count;
+        int base = (snap->head - cnt + HIST_SIZE) % HIST_SIZE;
 
         for (int i = 0; i < cnt; i++) {
             int idx = (base + i) % HIST_SIZE;
-            response->printf("%u", historySnapshot.timestamps[idx]);
+            response->printf("%u", snap->timestamps[idx]);
             if (i < cnt - 1) response->print(",");
         }
 
         response->print("],\"temps\":[");
         for (int i = 0; i < cnt; i++) {
             int idx = (base + i) % HIST_SIZE;
-            response->printf("%.1f", historySnapshot.temps[idx]);
+            response->printf("%.1f", snap->temps[idx]);
             if (i < cnt - 1) response->print(",");
         }
 
         response->print("],\"sps\":[");
         for (int i = 0; i < cnt; i++) {
             int idx = (base + i) % HIST_SIZE;
-            response->printf("%.0f", historySnapshot.sps[idx]);
+            response->printf("%.0f", snap->sps[idx]);
             if (i < cnt - 1) response->print(",");
         }
         
         response->print("]}");
         request->send(response);
+        
+        delete snap;
     });
 
     // 5. START
-    server.on("/start", HTTP_POST, [](AsyncWebServerRequest *request){
+    server.on("/start", HTTP_POST,[](AsyncWebServerRequest *request){
         if (!checkToken(request)) return;
         
         if (emergencyStopped) {
@@ -192,19 +194,22 @@ void registerAPI() {
     });
 
     // 6. STOP
-    server.on("/stop", HTTP_POST, [](AsyncWebServerRequest *request){
+    server.on("/stop", HTTP_POST,[](AsyncWebServerRequest *request){
         if (!checkToken(request)) return;
         stopReflow();
         request->send(200, "text/plain", "OK");
     });
 
     // 7. RESET
-    server.on("/reset", HTTP_POST, [](AsyncWebServerRequest *request){
+    server.on("/reset", HTTP_POST,[](AsyncWebServerRequest *request){
         if (!checkToken(request)) return;
         emergencyStopped = false;
         running = false;
         finished = false;
         timerActive = false;
+        tcFailCount = 0;
+        tcVerifyPending = false;
+        
         digitalWrite(PIN_SSR, LOW);
         ssrDeadmanKick = millis();
         
@@ -216,7 +221,7 @@ void registerAPI() {
     });
 
     // 7.b. Get List of Built-in Profiles
-    server.on("/profiles", HTTP_GET, [](AsyncWebServerRequest *request){
+    server.on("/profiles", HTTP_GET,[](AsyncWebServerRequest *request){
         AsyncResponseStream *response = request->beginResponseStream("application/json");
         response->print("[");
         
@@ -239,7 +244,7 @@ void registerAPI() {
     });
 
     // 8. GET CUSTOM PROFILE
-    server.on("/getcustom", HTTP_GET, [](AsyncWebServerRequest *request){
+    server.on("/getcustom", HTTP_GET,[](AsyncWebServerRequest *request){
         if (LittleFS.exists("/profile.json")) {
             request->send(LittleFS, "/profile.json", "application/json");
         } else {
@@ -248,12 +253,10 @@ void registerAPI() {
     });
 
     // 9. SET CUSTOM PROFILE
-    server.on("/setcustom", HTTP_POST, 
-        [](AsyncWebServerRequest *request){
+    server.on("/setcustom", HTTP_POST,[](AsyncWebServerRequest *request){
             request->send(200, "text/plain", "OK");
         },
-        NULL,
-        [](AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total){
+        NULL,[](AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total){
             if (!checkToken(request)) return;
 
             DynamicJsonDocument doc(2048);
@@ -294,7 +297,7 @@ void registerAPI() {
     );
 
     // 10. SET PID
-    server.on("/setpid", HTTP_POST, [](AsyncWebServerRequest *request){
+    server.on("/setpid", HTTP_POST,[](AsyncWebServerRequest *request){
         if (!checkToken(request)) return;
         
         if (request->hasArg("kp")) PID_KP = request->arg("kp").toDouble();
@@ -308,8 +311,8 @@ void registerAPI() {
     });
 
     // 11. TOGGLE MONITORING
-    server.on("/monitor", HTTP_POST, [](AsyncWebServerRequest *request){
-        if (!checkToken(request)) return;
+    server.on("/monitor", HTTP_POST,[](AsyncWebServerRequest *request){
+    if (!checkToken(request)) return;
         
         bool state = request->arg("state") == "1";
         
