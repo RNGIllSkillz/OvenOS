@@ -1,9 +1,5 @@
 #pragma once
-
-// USER CONFIG
-const char* WIFI_SSID     = "";
-const char* WIFI_PASS     = "";
-const char* API_TOKEN     = "oven2026";
+#include "credentials.h"
 
 // PIN DEFINITIONS
 const int PIN_SSR     = 4;
@@ -27,4 +23,5 @@ const unsigned long HEAT_TIMEOUT_MS      = 60UL * 60UL * 1000UL; // 1hr max
 const double        MAX_RISE_PER_READ    = 10.0;
 const int           TC_FAIL_LIMIT        = 4;      
 const unsigned long HIST_INTERVAL        = 60000;  // 1 minute per point
+
 const int           HIST_SIZE            = 540;    // ~9 hours of history
