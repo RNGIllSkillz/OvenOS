@@ -7,10 +7,10 @@ const int PIN_TC_DO   = 19;
 const int PIN_TC_CS   = 5;
 const int PIN_TC_CLK  = 18;
 
-// PID TUNING 
-double PID_KP = 80.0;
-double PID_KI = 0.4;
-double PID_KD = 1.5;
+// PID TUNING
+extern double PID_KP;
+extern double PID_KI;
+extern double PID_KD;
 const int PID_WINDOW_SIZE = 1000;
 
 // SAFETY SETTINGS

@@ -7,35 +7,30 @@
 #include "webpage.h"
 #include "favicon.h"
 
-// Helper to check token for protected endpoints
-bool checkToken(AsyncWebServerRequest *request) {
-    if (request->hasArg("token") && request->arg("token") == API_TOKEN) {
-        return true;
-    }
-    request->send(403, "text/plain", "Forbidden");
-    return false;
-}
-
 void registerAPI() {
-    // 1. ROOT PAGE
     server.on("/", HTTP_GET,[](AsyncWebServerRequest *request){
+        if (!request->authenticate(WEB_USER, WEB_PASS)) return request->requestAuthentication();
         request->send_P(200, "text/html", PAGE_HTML);
     });
 
     server.on("/style.css", HTTP_GET,[](AsyncWebServerRequest *request){
+        if (!request->authenticate(WEB_USER, WEB_PASS)) return request->requestAuthentication();
         request->send_P(200, "text/css", PAGE_CSS);
     });
 
     server.on("/script.js", HTTP_GET,[](AsyncWebServerRequest *request){
+        if (!request->authenticate(WEB_USER, WEB_PASS)) return request->requestAuthentication();
         request->send_P(200, "application/javascript", PAGE_JS);
     });
 
     server.on("/favicon.ico", HTTP_GET,[](AsyncWebServerRequest *request){
+        if (!request->authenticate(WEB_USER, WEB_PASS)) return request->requestAuthentication();
         request->send_P(200, "image/x-icon", (const uint8_t*)favicon_ico, favicon_ico_len);
     });
 
-    // 3. STATUS (JSON)
-    server.on("/status", HTTP_GET, [](AsyncWebServerRequest *request){
+    server.on("/status", HTTP_GET,[](AsyncWebServerRequest *request){
+        if (!request->authenticate(WEB_USER, WEB_PASS)) return request->requestAuthentication();
+        
         char buf[640]; 
         char msgBuf[64];
         char profNameBuf[33] = "";
@@ -95,9 +90,9 @@ void registerAPI() {
         request->send(200, "application/json", buf);
     });
 
-    // 4. HISTORY 
     server.on("/history", HTTP_GET,[](AsyncWebServerRequest *request){
-        // Allocate dynamically to prevent race condition across multiple clients/requests
+        if (!request->authenticate(WEB_USER, WEB_PASS)) return request->requestAuthentication();
+        
         HistoryBuffer* snap = new (std::nothrow) HistoryBuffer();
         if (!snap) {
             request->send(500, "text/plain", "OOM");
@@ -141,9 +136,8 @@ void registerAPI() {
         delete snap;
     });
 
-    // 5. START
     server.on("/start", HTTP_POST,[](AsyncWebServerRequest *request){
-        if (!checkToken(request)) return;
+        if (!request->authenticate(WEB_USER, WEB_PASS)) return request->requestAuthentication();
         
         if (emergencyStopped) {
             request->send(409, "text/plain", "Emergency Stop Active");
@@ -193,24 +187,25 @@ void registerAPI() {
         }
     });
 
-    // 6. STOP
     server.on("/stop", HTTP_POST,[](AsyncWebServerRequest *request){
-        if (!checkToken(request)) return;
+        if (!request->authenticate(WEB_USER, WEB_PASS)) return request->requestAuthentication();
         stopReflow();
         request->send(200, "text/plain", "OK");
     });
 
-    // 7. RESET
     server.on("/reset", HTTP_POST,[](AsyncWebServerRequest *request){
-        if (!checkToken(request)) return;
+        if (!request->authenticate(WEB_USER, WEB_PASS)) return request->requestAuthentication();
+        
+        portENTER_CRITICAL(&ssrmux);
         emergencyStopped = false;
+        digitalWrite(PIN_SSR, LOW);
+        portEXIT_CRITICAL(&ssrmux);
+        
         running = false;
         finished = false;
         timerActive = false;
         tcFailCount = 0;
         tcVerifyPending = false;
-        
-        digitalWrite(PIN_SSR, LOW);
         ssrDeadmanKick = millis();
         
         if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
@@ -220,8 +215,9 @@ void registerAPI() {
         request->send(200, "text/plain", "OK");
     });
 
-    // 7.b. Get List of Built-in Profiles
     server.on("/profiles", HTTP_GET,[](AsyncWebServerRequest *request){
+        if (!request->authenticate(WEB_USER, WEB_PASS)) return request->requestAuthentication();
+        
         AsyncResponseStream *response = request->beginResponseStream("application/json");
         response->print("[");
         
@@ -243,8 +239,9 @@ void registerAPI() {
         request->send(response);
     });
 
-    // 8. GET CUSTOM PROFILE
     server.on("/getcustom", HTTP_GET,[](AsyncWebServerRequest *request){
+        if (!request->authenticate(WEB_USER, WEB_PASS)) return request->requestAuthentication();
+        
         if (LittleFS.exists("/profile.json")) {
             request->send(LittleFS, "/profile.json", "application/json");
         } else {
@@ -252,53 +249,47 @@ void registerAPI() {
         }
     });
 
-    // 9. SET CUSTOM PROFILE
-    server.on("/setcustom", HTTP_POST,[](AsyncWebServerRequest *request){
-            request->send(200, "text/plain", "OK");
-        },
-        NULL,[](AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total){
-            if (!checkToken(request)) return;
+    AsyncCallbackJsonWebHandler* customHandler = new AsyncCallbackJsonWebHandler("/setcustom",[](AsyncWebServerRequest *request, JsonVariant &json) {
+        if (!request->authenticate(WEB_USER, WEB_PASS)) return request->requestAuthentication();
 
-            DynamicJsonDocument doc(2048);
-            DeserializationError err = deserializeJson(doc, (const char*)data, len);
+        JsonObject doc = json.as<JsonObject>();
+        if (doc.isNull()) { request->send(400, "text/plain", "Invalid JSON"); return; }
+
+        const char* nameIn = doc["name"];
+        if (!nameIn || strlen(nameIn) > 31) { request->send(400, "text/plain", "Invalid Name"); return; }
+
+        JsonArray steps = doc["steps"];
+        if (steps.size() == 0 || steps.size() > 8) { request->send(400, "text/plain", "Invalid Steps Count"); return; }
+
+        ProfileStep tempSteps[8];
+        int count = 0;
+        for (JsonObject s : steps) {
+            if (!s.containsKey("temp") || !s.containsKey("hold")) { request->send(400, "text/plain", "Missing temp/hold"); return; }
+            double temp = s["temp"];
+            unsigned long hold = s["hold"];
             
-            if (err) {
-                Serial.println("JSON parse failed");
-                return;
-            }
-
-            const char* nameIn = doc["name"];
-            if (!nameIn || strlen(nameIn) > 31) return;
-
-            JsonArray steps = doc["steps"];
-            if (steps.size() == 0 || steps.size() > 8) return;
-
-            ProfileStep tempSteps[8];
-            int count = 0;
-            for (JsonObject s : steps) {
-                if (!s.containsKey("temp") || !s.containsKey("hold")) return;
-                double temp = s["temp"];
-                unsigned long hold = s["hold"];
-                
-                if (temp < 0 || temp > 280 || hold < 1 || hold > 600) return;
-                tempSteps[count].targetTemp = temp;
-                tempSteps[count].holdMin = hold;
-                sanitizeStr(tempSteps[count].label, s["label"] | "Step", 23);
-                count++;
-            }
-
-            sanitizeStr(customName, nameIn, sizeof(customName));
-            customProfile.name = customName;
-            for (int k = 0; k < count; k++) customProfile.steps[k] = tempSteps[k];
-            customProfile.numSteps = count;
-            hasCustomProfile = true;
-            saveCustomProfile();
+            if (temp < 0 || temp > 280 || hold < 1 || hold > 600) { request->send(400, "text/plain", "Out of Bounds"); return; }
+            tempSteps[count].targetTemp = temp;
+            tempSteps[count].holdMin = hold;
+            sanitizeStr(tempSteps[count].label, s["label"] | "Step", 23);
+            count++;
         }
-    );
 
-    // 10. SET PID
+        sanitizeStr(customName, nameIn, sizeof(customName));
+        customProfile.name = customName;
+        for (int k = 0; k < count; k++) customProfile.steps[k] = tempSteps[k];
+        customProfile.numSteps = count;
+        hasCustomProfile = true;
+        saveCustomProfile();
+
+        request->send(200, "text/plain", "OK");
+    }); 
+    
+    customHandler->setMaxContentLength(2048);
+    server.addHandler(customHandler);
+
     server.on("/setpid", HTTP_POST,[](AsyncWebServerRequest *request){
-        if (!checkToken(request)) return;
+        if (!request->authenticate(WEB_USER, WEB_PASS)) return request->requestAuthentication();
         
         if (request->hasArg("kp")) PID_KP = request->arg("kp").toDouble();
         if (request->hasArg("ki")) PID_KI = request->arg("ki").toDouble();
@@ -310,13 +301,11 @@ void registerAPI() {
         request->send(200, "text/plain", "OK");
     });
 
-    // 11. TOGGLE MONITORING
     server.on("/monitor", HTTP_POST,[](AsyncWebServerRequest *request){
-    if (!checkToken(request)) return;
+        if (!request->authenticate(WEB_USER, WEB_PASS)) return request->requestAuthentication();
         
         bool state = request->arg("state") == "1";
         
-        // Only allow enabling monitor if not running
         if (state && running) {
             request->send(409, "text/plain", "Busy");
             return;
@@ -324,14 +313,13 @@ void registerAPI() {
 
         monitoring = state;
 
-        // If starting monitor, reset history for a clean graph
         if (state) {
             if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
                 history.head = 0;
                 history.count = 0;
                 xSemaphoreGive(dataMutex);
             }
-            runStart = millis(); // Reset time base for graph
+            runStart = millis(); 
             lastHistCapture = millis();
         }
 

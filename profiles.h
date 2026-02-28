@@ -19,6 +19,7 @@ const Profile BUILTIN_PROFILES[] = {
 const int NUM_BUILTIN = sizeof(BUILTIN_PROFILES) / sizeof(BUILTIN_PROFILES[0]);
 
 void sanitizeStr(char* dst, const char* src, size_t maxLen) {
+  if (!src) { dst[0] = '\0'; return; }
   size_t j = 0;
   for (size_t i = 0; src[i] && j < maxLen - 1; i++) {
     unsigned char c = (unsigned char)src[i];
@@ -51,7 +52,7 @@ void loadCustomProfile() {
   
   DynamicJsonDocument doc(2048);
   if(!deserializeJson(doc, f)) {
-     sanitizeStr(customName, doc["name"]|"Custom", sizeof(customName));
+     sanitizeStr(customName, doc["name"] | "Custom", sizeof(customName));
      customProfile.name = customName;
      JsonArray steps = doc["steps"];
      int c=0;
@@ -59,7 +60,7 @@ void loadCustomProfile() {
        if(c>=8) break;
        customProfile.steps[c].targetTemp = s["temp"];
        customProfile.steps[c].holdMin = s["hold"];
-       sanitizeStr(customProfile.steps[c].label, s["label"], 23);
+       sanitizeStr(customProfile.steps[c].label, s["label"] | "Шаг", 23);
        c++;
      }
      customProfile.numSteps = c;

@@ -27,6 +27,9 @@ extern char statusMsg[64];
 extern volatile bool emergencyStopped;
 extern volatile bool monitoring;
 
+// TC Verification State
+extern volatile bool tcVerifyPending;
+
 // Safety State
 extern double currentStepPeak; 
 extern double stepStartTemp;

@@ -3,7 +3,6 @@
 #include "config.h"
 
 // TC Verification State
-volatile bool tcVerifyPending = false;
 uint32_t tcVerifyStartTime = 0;
 double tcVerifyFirstReading = 0;
 
@@ -13,17 +12,23 @@ const uint32_t RUNAWAY_TIMEOUT_MS = 180000;
 
 // Runaway detection baseline
 double runawayBaselineTemp = 0;
-uint32_t runawayBaselineTime = 0;
 
 void IRAM_ATTR onDeadmanTimer(void* arg) {
     if ((millis() - ssrDeadmanKick) > SSR_DEADMAN_MS) {
+        portENTER_CRITICAL_ISR(&ssrmux); 
         digitalWrite(PIN_SSR, LOW);
         emergencyStopped = true; 
+        portEXIT_CRITICAL_ISR(&ssrmux);
     }
 }
 
 void emergencyStop(const char* reason) {
+    // NOTE: emergencyStop must NEVER be called from inside another portENTER_CRITICAL(&ssrmux) block to avoid deadlock.
+    portENTER_CRITICAL(&ssrmux);
     digitalWrite(PIN_SSR, LOW);
+    emergencyStopped = true;
+    portEXIT_CRITICAL(&ssrmux);
+    
     running = false;
     timerActive = false;
     finished = false;
@@ -32,11 +37,9 @@ void emergencyStop(const char* reason) {
     profStep = -1;
     Output = 0;
     
-    emergencyStopped = true;
     tcVerifyPending = false;
     myPID.SetMode(MANUAL);
     
-    // Protected Write
     if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
         snprintf(statusMsg, sizeof(statusMsg), "АВАРИЯ: %s", reason);
         xSemaphoreGive(dataMutex);
@@ -54,10 +57,10 @@ void stopReflow() {
     profStep = -1;
     Output = 0;
     
+    tcFailCount = 0; 
     tcVerifyPending = false;
     myPID.SetMode(MANUAL);
     
-    // Protected Write
     if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
         strncpy(statusMsg, "ОСТАНОВЛЕНО", sizeof(statusMsg) - 1);
         statusMsg[sizeof(statusMsg) - 1] = '\0';
@@ -82,7 +85,6 @@ void beginStep(int step) {
     currentStepPeak = Input; 
     stepStartTemp = Input; 
     
-    // Protected Write
     if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
         strncpy(statusMsg, s.label, sizeof(statusMsg) - 1);
         statusMsg[sizeof(statusMsg) - 1] = '\0';
@@ -98,7 +100,6 @@ void resetRunState() {
     profStep = -1;
     activeProfilePtr = nullptr;
     
-    // Reset history under mutex
     if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
         history.head = 0;
         history.count = 0;
@@ -118,7 +119,9 @@ void resetRunState() {
     stepStartTemp = 0;
     runawayBaselineTemp = 0; 
     
+    // NEVER clear emergencyStopped here. It should only be cleared by a manual API reset action.
     digitalWrite(PIN_SSR, LOW);
+    
     myPID.SetMode(MANUAL);
     myPID.SetOutputLimits(0, PID_WINDOW_SIZE);
     windowStartTime = millis();
@@ -185,33 +188,36 @@ void updateThermocouple() {
 void runControlLoop() {
     uint32_t now = millis();
     
-    // 1. Absolute Max Safety
     if (Input > SAFETY_MAX_TEMP) { emergencyStop("MAX TEMP LIMIT"); return; }
 
-    // 2. Deadman Software Check
-    if (emergencyStopped) { 
+    bool estopFlag = false;
+    portENTER_CRITICAL(&ssrmux);
+    estopFlag = emergencyStopped;
+    portEXIT_CRITICAL(&ssrmux);
+
+    if (estopFlag) { 
         digitalWrite(PIN_SSR, LOW); 
-        // Protected Write
         if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
-             if (strncmp(statusMsg, "АВАРИЯ", 6) != 0) strncpy(statusMsg, "АВАРИЯ: СБОЙ", 63);
+             // UTF-8: "АВАРИЯ" = 12 bytes
+             if (strncmp(statusMsg, "АВАРИЯ", 12) != 0) strncpy(statusMsg, "АВАРИЯ: СБОЙ", 63);
              xSemaphoreGive(dataMutex);
         }
         return; 
     }
 
     if (running) {
-        if (Input > (Setpoint + 20.0) && Setpoint > 40) {
+        double maxExpected = (Setpoint > stepStartTemp) ? Setpoint : stepStartTemp;
+        
+        if (Input > (maxExpected + 20.0) && maxExpected > 40) {
             emergencyStop("ПЕРЕГРЕВ (>SP+20)");
             return;
         }
 
-        // Only check drop if NOT cooling AND we are stabilizing/climbing
         if (!timerActive) {
             if (Setpoint >= stepStartTemp) {
                 if (Input > currentStepPeak) currentStepPeak = Input;
                 
-                // Only trigger if we are actively trying to heat (Input < Setpoint)
-                if (Input < Setpoint && currentStepPeak > 40 && Input < (currentStepPeak - 5.0)) {
+                if (Input < Setpoint && currentStepPeak > 40 && Input < (currentStepPeak - 15.0)) {
                     emergencyStop("ПАДЕНИЕ ТЕМП."); 
                     return;
                 }
@@ -219,9 +225,7 @@ void runControlLoop() {
         }
     }
 
-    // Capture history if running OR temp > 25C
     if ((running || monitoring || Input > 25.0) && (now - lastHistCapture >= HIST_INTERVAL)) {
-        // Protected Write
         if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
             int idx = history.head;
             history.temps[idx] = Input;
@@ -241,7 +245,7 @@ void runControlLoop() {
         return; 
     }
 
-    if (!timerActive && HEAT_TIMEOUT_MS > 0) {
+    if (!timerActive) {
         if (heatStartTime == 0) heatStartTime = now;
         if (now - heatStartTime > HEAT_TIMEOUT_MS) { emergencyStop("ТАЙМАУТ"); return; }
     }
@@ -250,29 +254,25 @@ void runControlLoop() {
     myPID.Compute();
     
     uint32_t wElapsed = now - windowStartTime;
-    if (wElapsed >= (uint32_t)PID_WINDOW_SIZE) { 
+    while (wElapsed >= (uint32_t)PID_WINDOW_SIZE) { 
         windowStartTime += PID_WINDOW_SIZE; 
-        wElapsed = 0; 
+        wElapsed -= PID_WINDOW_SIZE; 
     }
     
     if (tcFailCount == 0) digitalWrite(PIN_SSR, (Output > wElapsed));
     else digitalWrite(PIN_SSR, LOW);
 
-    // Thermal Runaway
     if (Output >= PID_WINDOW_SIZE * 0.9) { 
         if (fullPowerStartTime == 0) {
             fullPowerStartTime = now;
             runawayBaselineTemp = Input;
-            runawayBaselineTime = now;
         }
         else if (now - fullPowerStartTime > RUNAWAY_TIMEOUT_MS) {
             if (Input < (Setpoint - 10)) {
-                // Check delta over the last 3 minutes
                 if ((Input - runawayBaselineTemp) < 5.0) {
                      emergencyStop("ТЕПЛОВОЙ РАЗГОН");
                      return;
                 } else {
-                     // Successfully rose enough; reset baseline for the next 3 mins!
                      runawayBaselineTemp = Input;
                      fullPowerStartTime = now; 
                 }
@@ -287,7 +287,6 @@ void runControlLoop() {
         if (err <= STABLE_TOLERANCE) {
             if (stabStart == 0) { 
                 stabStart = now; 
-                // Protected Write
                 if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
                     strncpy(statusMsg, "СТАБИЛИЗАЦИЯ", 63); 
                     xSemaphoreGive(dataMutex);

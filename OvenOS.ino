@@ -1,5 +1,5 @@
 // ============================================================
-//  CGF PID Oven Controller — OvenOS v3.0 
+//  CGF PID Oven Controller — OvenOS v3.0
 // ============================================================
 #include <WiFi.h>
 #include <esp_task_wdt.h>
@@ -15,8 +15,16 @@
 #include "api.h"
 
 // --- Global Variable Definitions ---
+// Initial placeholder values; loadSettings() overrides these at boot.
+double PID_KP = 80.0;
+double PID_KI = 0.4;
+double PID_KD = 1.5;
+
 MAX6675 thermocouple(PIN_TC_CLK, PIN_TC_CS, PIN_TC_DO);
 double Setpoint = 0, Input = 25, Output = 0;
+
+// Initialize PID with defaults. NOTE: Any future function modifying global PID constants 
+// (e.g., loadSettings) MUST explicitly call myPID.SetTunings() to sync this hardware object.
 PID myPID(&Input, &Output, &Setpoint, PID_KP, PID_KI, PID_KD, DIRECT);
 
 AsyncWebServer server(80); 
@@ -27,6 +35,7 @@ volatile bool timerActive = false;
 volatile bool finished = false;
 volatile bool emergencyStopped = false;
 volatile bool monitoring = false;
+volatile bool tcVerifyPending = false;
 
 bool profMode = false;
 int profStep = -1;
@@ -60,9 +69,8 @@ SemaphoreHandle_t dataMutex;
 void setup() {
     Serial.begin(115200);
     delay(100);
-    Serial.println("\n[INIT] OvenOS v2.5");
+    Serial.println("\n[INIT] OvenOS v3.0");
 
-    // Create Mutex with Assert
     dataMutex = xSemaphoreCreateMutex();
     configASSERT(dataMutex); 
 
@@ -76,7 +84,7 @@ void setup() {
         loadSettings();
     }
 
-    // --- WIFI SETUP  ---
+    // --- WIFI SETUP WITH AP FALLBACK ---
     WiFi.mode(WIFI_STA);
     WiFi.setSleep(false);
     WiFi.setTxPower(WIFI_POWER_19_5dBm);
@@ -87,11 +95,15 @@ void setup() {
     while (WiFi.status() != WL_CONNECTED && millis() - wifiStart < 20000) {
         delay(100); 
     }
+    
     if (WiFi.status() == WL_CONNECTED) {
-        Serial.print("[INIT] IP: "); Serial.println(WiFi.localIP());
+        Serial.print("[INIT] STA IP: "); Serial.println(WiFi.localIP());
     }
     else {
-        Serial.println("Connection failed");
+        Serial.println("[WIFI] Connection failed. Starting AP Mode.");
+        WiFi.mode(WIFI_AP);
+        WiFi.softAP(WIFI_AP_SSID, WIFI_AP_PASS); 
+        Serial.print("[INIT] AP IP: "); Serial.println(WiFi.softAPIP());
     }
 
     myPID.SetOutputLimits(0, PID_WINDOW_SIZE);
@@ -101,16 +113,14 @@ void setup() {
     registerAPI();
     server.begin();
 
-    // Watchdog Setup (ESP32 Core 3.x compatible)
     esp_task_wdt_config_t wdt_config = {
         .timeout_ms = WDT_TIMEOUT_SEC * 1000,
-        .idle_core_mask = 0, // 0 = Watch only loopTask
+        .idle_core_mask = 0, 
         .trigger_panic = true
     };
     esp_task_wdt_reconfigure(&wdt_config);
     esp_task_wdt_add(NULL);
 
-    // Deadman Timer
     esp_timer_create_args_t timer_args = {};
     timer_args.callback = &onDeadmanTimer;
     timer_args.name = "deadman";
@@ -126,13 +136,19 @@ void setup() {
 void loop() {
     uint32_t now = millis();
     esp_task_wdt_reset();
-    if (!emergencyStopped) {
+    
+    // Strict RTOS safety: read the volatile flag inside the spinlock
+    bool estopFlag;
+    portENTER_CRITICAL(&ssrmux);
+    estopFlag = emergencyStopped;
+    portEXIT_CRITICAL(&ssrmux);
+
+    if (!estopFlag) {
         ssrDeadmanKick = now;
     }
     
-    // WiFi Reconnection 
     static uint32_t lastWifiCheck = 0;
-    if (now - lastWifiCheck > 30000) {
+    if (WiFi.getMode() == WIFI_STA && (now - lastWifiCheck > 30000)) {
         lastWifiCheck = now;
         if (WiFi.status() != WL_CONNECTED) {
             Serial.println("[WIFI] Connection lost. Reconnecting...");

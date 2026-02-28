@@ -33,7 +33,6 @@ void loadSettings() {
         if (doc.containsKey("ki")) PID_KI = doc["ki"];
         if (doc.containsKey("kd")) PID_KD = doc["kd"];
         
-        // Update the live PID object
         myPID.SetTunings(PID_KP, PID_KI, PID_KD);
         Serial.printf("[SETTINGS] Loaded PID: P=%.1f I=%.2f D=%.2f\n", PID_KP, PID_KI, PID_KD);
     }

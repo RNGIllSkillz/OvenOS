@@ -2,7 +2,6 @@
 #include <Arduino.h>
 
 const char PAGE_JS[] PROGMEM = R"rawliteral(
-const AUTH_TOKEN = "oven2026";
 var CUSTOM_PROF_IDX = 999;
 var profileCache =[];
 
@@ -11,8 +10,8 @@ var graphMode = "live";
 var prevMsg = "";
 var prevStep = -1;
 
-var histTemps =[], histSPs =[], histTS = [];
-var liveTemps = [], liveSPs = [], liveTS =[];
+var histTemps =[], histSPs =[], histTS =[];
+var liveTemps = [], liveSPs =[], liveTS =[];
 var liveStartWall = 0;
 var LIVE_MAX = 36000; 
 var statusPending = false;
@@ -89,9 +88,8 @@ function syncLiveGraph() {
   
   var cutoff = liveTS.length > 0 ? liveTS[0] : Infinity;
   var added = 0;
-  var newTS =[], newTemps = [], newSPs =[];
+  var newTS =[], newTemps =[], newSPs =[];
   
-  // Extract historical points strictly older than our Live graph's earliest point
   for (var i = 0; i < histTS.length; i++) {
     if (histTS[i] < cutoff) {
       newTS.push(histTS[i]);
@@ -102,12 +100,10 @@ function syncLiveGraph() {
   }
   
   if (added > 0) {
-    // Prepend historical points to Live arrays
     liveTS = newTS.concat(liveTS);
     liveTemps = newTemps.concat(liveTemps);
     liveSPs = newSPs.concat(liveSPs);
     
-    // Safety memory limit crop
     if (liveTS.length > LIVE_MAX) {
       var excess = liveTS.length - LIVE_MAX;
       liveTS = liveTS.slice(excess);
@@ -368,12 +364,11 @@ function setRunning(r) {
 
 function doStart() {
   var fd = new FormData();
-  fd.append("token", AUTH_TOKEN);
   
   setRunning(true);
-  histTemps = []; histSPs = []; histTS =[];
-  liveTemps = []; liveSPs =[]; liveTS =[];
-  liveStartWall = 0; // Will cleanly resync with ESP on next poll
+  histTemps = []; histSPs =[]; histTS =[];
+  liveTemps =[]; liveSPs =[]; liveTS =[];
+  liveStartWall = 0;
   drawChart();
 
   if (mode === "manual") {
@@ -405,15 +400,15 @@ function doStart() {
     var profJson = JSON.stringify({name:name, steps:steps});
     addLog("Запуск: Свой '"+name+"'", "ev");
     
-    fetch("/setcustom",{method:"POST",headers:{"Content-Type":"application/json"},body:profJson})
+    fetch("/setcustom", {method:"POST",headers:{"Content-Type":"application/json"},body:profJson})
     .then(r => {
-      if(!r.ok) throw new Error("Save failed");
-      var fd2 = new FormData(); fd2.append("token", AUTH_TOKEN);
+      if(!r.ok) return r.text().then(t => { throw new Error(t); });
+      var fd2 = new FormData();
       fd2.append("mode","profile"); fd2.append("profile", String(CUSTOM_PROF_IDX));
       return fetch("/start",{method:"POST",body:fd2});
     })
     .then(r => { if(!r.ok) return r.text().then(t => { throw new Error(t); }); })
-    .catch(e => { setRunning(false); addLog("Ошибка: "+e, "err"); });
+    .catch(e => { setRunning(false); addLog("Ошибка: "+e.message, "err"); });
   }
 }
 
@@ -426,23 +421,22 @@ function saveCustomProfile() {
   document.getElementById("custName").value = name;
   var profJson = JSON.stringify({name:name, steps:steps});
   
-  fetch("/setcustom",{method:"POST",headers:{"Content-Type":"application/json"},body:profJson})
+  fetch("/setcustom", {method:"POST",headers:{"Content-Type":"application/json"},body:profJson})
   .then(r => {
-    if (!r.ok) throw new Error("Save failed");
+    if (!r.ok) return r.text().then(t => { throw new Error(t); });
     btn.innerHTML = "&#10003; Сохранено!"; btn.classList.add("saved"); btn.disabled = false;
     addLog("Профиль сохранён: '"+name+"'", "success");
     setTimeout(() => { btn.innerHTML = "&#10003; Сохранить профиль"; btn.classList.remove("saved"); }, 2500);
   })
-  .catch(() => {
+  .catch((e) => {
     btn.textContent = "Ошибка сохранения"; btn.disabled = false;
-    addLog("Ошибка сохранения профиля", "err");
+    addLog("Ошибка: " + e.message, "err");
     setTimeout(() => { btn.innerHTML = "&#10003; Сохранить профиль"; }, 2500);
   });
 }
 
 function savePID() {
   var fd = new FormData();
-  fd.append("token", AUTH_TOKEN);
   fd.append("kp", document.getElementById("pidKp").value);
   fd.append("ki", document.getElementById("pidKi").value);
   fd.append("kd", document.getElementById("pidKd").value);
@@ -455,10 +449,7 @@ function savePID() {
 }
 
 function doStop() {
-  var fd = new FormData();
-  fd.append("token", AUTH_TOKEN);
-  
-  fetch("/stop",{method:"POST",body:fd})
+  fetch("/stop",{method:"POST"})
     .then(r => {
         if (!r.ok) throw new Error("HTTP "+r.status);
         setRunning(false);
@@ -470,8 +461,7 @@ function doStop() {
 }
 
 function doReset() {
-  var fd = new FormData(); fd.append("token", AUTH_TOKEN);
-  fetch("/reset",{method:"POST",body:fd})
+  fetch("/reset",{method:"POST"})
   .then(r => { if(r.ok) addLog("Сброс ошибки выполнен", "success"); else addLog("Ошибка сброса", "err"); });
 }
 
@@ -539,25 +529,20 @@ function pollStatus() {
       el.textContent = temp.toFixed(1);
       el.className = "tbig "+(temp>150?"hot":temp<40?"cool":"");
 
-      // --- CRITICAL TIME SYNCHRONIZATION ---
-      // Align the browser's live timeline precisely with the ESP32's actual elapsed time
       var elapsed = validateNumber(d.elapsed, 0, 86400000, 0);
       if (liveStartWall === 0) {
         liveStartWall = Date.now() - (elapsed * 1000);
       } else {
         var expectedLive = (Date.now() - liveStartWall) / 1000;
-        // If our browser clock drifted or the controller started a new run (resetting elapsed to 0)
         if (Math.abs(expectedLive - elapsed) > 5) {
           liveStartWall = Date.now() - (elapsed * 1000);
-          // If the ESP32 time went backwards compared to our chart, it's a new run. Clear graph.
           if (elapsed < expectedLive && liveTS.length > 0 && elapsed < liveTS[liveTS.length-1]) {
-             liveTS = []; liveTemps = []; liveSPs =[];
+             liveTS =[]; liveTemps = []; liveSPs =[];
           }
         }
       }
 
       var liveNow = (Date.now() - liveStartWall) / 1000;
-      // Push the data to the live graph
       if (liveTS.length === 0 || liveNow > liveTS[liveTS.length-1]) {
          liveTemps.push(temp); 
          liveSPs.push(sp); 
@@ -571,9 +556,14 @@ function pollStatus() {
       var pill = document.getElementById("pill");
       var msg = String(d.msg || "Неизвестно");
       pill.textContent = msg; pill.className = "pill";
-      if (/НАГРЕВ|СТАБИЛ|Сушка|Отжиг|Оплавление|Выдержка|Преднагрев|Пред/.test(msg)) pill.classList.add("heat");
-      else if (/ПОДДЕРЖКА|ЗАВЕРШЕН|КОНЕЦ/.test(msg)) pill.classList.add("hold");
-      else if (/АВАРИЯ|ОСТАНОВКА|TIMEOUT|FAULT|SPIKE|OVERHEAT|ПАДЕНИЕ|РАЗГОН/.test(msg)) pill.classList.add("err");
+      
+      if (/НАГРЕВ|СТАБИЛ|Сушка|Отжиг|Оплавление|Выдержка|Преднагрев|Пред/.test(msg)) {
+          pill.classList.add("heat");
+      } else if (/ПОДДЕРЖКА|ЗАВЕРШЕН|КОНЕЦ|ГОТОВО/.test(msg)) {
+          pill.classList.add("hold");
+      } else if (/АВАРИЯ|ОСТАНОВКА|TIMEOUT|FAULT|SPIKE|OVERHEAT|ПАДЕНИЕ|РАЗГОН|ОСТАНОВЛЕНО/.test(msg)) {
+          pill.classList.add("err");
+      }
 
       if(!d.emergency) setRunning(d.running);
 
@@ -607,7 +597,7 @@ function pollStatus() {
 
       if (msg !== prevMsg) { 
         var logCls = "ev";
-        if (/АВАРИЯ|TIMEOUT|FAULT|SPIKE|OVERHEAT|ПАДЕНИЕ|РАЗГОН/.test(msg)) logCls = "err";
+        if (/АВАРИЯ|TIMEOUT|FAULT|SPIKE|OVERHEAT|ПАДЕНИЕ|РАЗГОН|ОСТАНОВЛЕНО/.test(msg)) logCls = "err";
         else if (/ПОДДЕРЖКА|ЗАВЕРШЕН|КОНЕЦ|ГОТОВО/.test(msg)) logCls = "success";
         addLog("Состояние: "+msg, logCls); prevMsg = msg; 
       }
@@ -639,7 +629,6 @@ function toggleMonitor() {
   var newState = isMon ? "0" : "1";
 
   var fd = new FormData();
-  fd.append("token", AUTH_TOKEN);
   fd.append("state", newState);
 
   fetch("/monitor", {method:"POST", body:fd})
@@ -648,7 +637,7 @@ function toggleMonitor() {
             if(newState==="1") {
                 addLog("Мониторинг запущен", "ev");
                 histTemps=[]; histSPs=[]; histTS=[]; liveTemps=[]; liveSPs=[]; liveTS=[];
-                liveStartWall = 0; // Let pollStatus resync cleanly
+                liveStartWall = 0; 
             } else {
                 addLog("Мониторинг остановлен", "ev");
             }
