@@ -1,4 +1,5 @@
 OvenOS v3.0 (Temperature Controller)
+
 OvenOS is an enterprise-grade, highly robust ESP32-based PID temperature controller firmware. It is designed to turn any generic toaster oven or dedicated heating chamber into a precision smart oven. It is perfect for PCB SMD reflow soldering, 3D printing filament drying, and plastic annealing.
 Featuring a responsive, dark-mode web interface with live charting, strict RTOS-level thread safety, and multi-layered hardware/software thermal protections.
 
