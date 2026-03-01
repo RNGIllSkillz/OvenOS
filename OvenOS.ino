@@ -174,8 +174,8 @@ void loop() {
 
     // Single source of truth for the SSR
     bool safeToFire = running && !finished && !emergencyStopped 
-                   && !tcVerifyPending && (tcFailCount == 0);                   
+                   && !tcVerifyPending && (tcFailCount < TC_FAIL_LIMIT);                   
     digitalWrite(PIN_SSR, safeToFire && (Output > wElapsed));
-    
+
     delay(1); 
 }

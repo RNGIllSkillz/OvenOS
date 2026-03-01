@@ -60,6 +60,8 @@ void stopReflow() {
     tcFailCount = 0; 
     tcVerifyPending = false;
     myPID.SetMode(MANUAL);
+    runawayBaselineTemp = 0;
+    fullPowerStartTime = 0;
     
     if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
         strncpy(statusMsg, L_STATE_STOPPED, sizeof(statusMsg) - 1);
@@ -75,8 +77,20 @@ void beginStep(int step) {
         return;
     }
     const ProfileStep& s = activeProfilePtr->steps[step];
-    Setpoint = s.targetTemp;
-    holdMin = s.holdMin;
+    
+    // Lock the 64-bit writes to prevent torn reads
+    if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+        Setpoint = s.targetTemp;
+        holdMin = s.holdMin;
+        strncpy(statusMsg, s.label, sizeof(statusMsg) - 1);
+        statusMsg[sizeof(statusMsg) - 1] = '\0';
+        xSemaphoreGive(dataMutex);
+    } else {
+        // Fallback if heavily congested
+        Setpoint = s.targetTemp;
+        holdMin = s.holdMin;
+    }
+
     timerActive = false;
     stabStart = 0;
     procStart = 0;
@@ -287,12 +301,6 @@ void runControlLoop() {
         xSemaphoreGive(dataMutex);
     }
     
-    uint32_t wElapsed = now - windowStartTime;
-    while (wElapsed >= (uint32_t)PID_WINDOW_SIZE) { 
-        windowStartTime += PID_WINDOW_SIZE; 
-        wElapsed -= PID_WINDOW_SIZE; 
-    }    
-
     if (Output >= PID_WINDOW_SIZE * 0.9) { 
         if (fullPowerStartTime == 0) {
             fullPowerStartTime = now;

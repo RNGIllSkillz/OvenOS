@@ -25,6 +25,7 @@ void registerAPI() {
     });
 
     server.on("/lang.js", HTTP_GET,[](AsyncWebServerRequest *request){
+        if (!request->authenticate(WEB_USER, WEB_PASS)) return request->requestAuthentication();
         request->send_P(200, "application/javascript", WEB_LANG_JS);
     });
 
@@ -155,23 +156,25 @@ void registerAPI() {
 
         if (m == "profile") {
             int idx = request->arg("profile").toInt();
+            const Profile* selectedProfile = nullptr;
             if (idx == NUM_BUILTIN) {
                 if (!hasCustomProfile) { request->send(400); return; }
-                activeProfilePtr = &customProfile;
+                selectedProfile = &customProfile;
             } else if (idx >= 0 && idx < NUM_BUILTIN) {
-                activeProfilePtr = &BUILTIN_PROFILES[idx];
+                selectedProfile = &BUILTIN_PROFILES[idx];
             } else {
                 request->send(400); return;
             }
-            profMode = true;
-            profStep = 0;
-            beginStep(0);
-            running = true;
             
             if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+                activeProfilePtr = selectedProfile;
+                profMode = true;
+                profStep = 0;
+                running = true;
                 myPID.SetMode(AUTOMATIC);
                 xSemaphoreGive(dataMutex);
             }
+            beginStep(0);
             request->send(200, "text/plain", "OK");
 
         } else if (m == "manual") {
@@ -183,13 +186,12 @@ void registerAPI() {
                 return; 
             }
             
-            profMode = false;
-            activeProfilePtr = nullptr;
-            Setpoint = t;
-            holdMin = (unsigned long)tm; // Safely cast positive bounds-checked int
-            running = true;
-            
             if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+                profMode = false;
+                activeProfilePtr = nullptr;
+                Setpoint = t;
+                holdMin = (unsigned long)tm; 
+                running = true;
                 strncpy(statusMsg, L_STATE_HEATING, sizeof(statusMsg)-1);
                 myPID.SetMode(AUTOMATIC);
                 xSemaphoreGive(dataMutex);
