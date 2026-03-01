@@ -119,7 +119,8 @@ header {
 #langSel {
   font-family:   var(--mono);
   font-size:     .72rem;
-  padding:       1px 10px;
+  padding:       2px 10px;
+  margin:        0;
   border-radius: 2px;
   background:    #1a1d20;
   border:        1px solid var(--bdr);
@@ -130,8 +131,6 @@ header {
   outline:       none;
   transition:    all .4s;
   width:         62px;
-  height:        22px;
-  line-height:   18px;
 }
 
 /* Animations */
