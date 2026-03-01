@@ -209,6 +209,14 @@ void updateThermocouple() {
 
 void runControlLoop() {
     uint32_t now = millis();
+
+    double snapSP = Setpoint;
+    unsigned long snapHold = holdMin;
+    if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(5)) == pdTRUE) {
+        snapSP = Setpoint;
+        snapHold = holdMin;
+        xSemaphoreGive(dataMutex);
+    }
     
     if (Input > SAFETY_MAX_TEMP) { 
         emergencyStop(L_ERR_MAX_TEMP); 
@@ -237,7 +245,7 @@ void runControlLoop() {
     }
 
     if (running) {
-        double maxExpected = (Setpoint > stepStartTemp) ? Setpoint : stepStartTemp;
+        double maxExpected = (snapSP > stepStartTemp) ? snapSP : stepStartTemp;
         
         if (Input > (maxExpected + 20.0) && maxExpected > 40) {
             emergencyStop(L_ERR_OVERSHOOT);
@@ -245,10 +253,10 @@ void runControlLoop() {
         }
     
         if (!timerActive) {
-            if (Setpoint >= stepStartTemp) {
+            if (snapSP >= stepStartTemp) {
                 if (Input > currentStepPeak) currentStepPeak = Input;
                 
-                if (Input < Setpoint && currentStepPeak > 40 && Input < (currentStepPeak - 15.0)) {
+                if (Input < snapSP && currentStepPeak > 40 && Input < (currentStepPeak - 15.0)) {
                     emergencyStop(L_ERR_DROP); 
                     return;
                 }
@@ -267,7 +275,7 @@ void runControlLoop() {
         if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
             int idx = history.head;
             history.temps[idx] = (int16_t)round(Input * 10.0);
-            history.sps[idx] = (int16_t)round(Setpoint);
+            history.sps[idx] = (int16_t)round(snapSP);
             
             // Calculate relative seconds. Max out at 65535 (18.2 hours) to fit in uint16_t
             uint32_t elapsed = (now >= runStart) ? (now - runStart) / 1000 : 0;
@@ -307,7 +315,7 @@ void runControlLoop() {
             runawayBaselineTemp = Input;
         }
         else if (now - fullPowerStartTime > RUNAWAY_TIMEOUT_MS) {
-            if (Input < (Setpoint - 10)) {
+            if (Input < (snapSP - 10)) {
                 if ((Input - runawayBaselineTemp) < 5.0) {
                      emergencyStop(L_ERR_RUNAWAY);
                      return;
@@ -321,11 +329,11 @@ void runControlLoop() {
         fullPowerStartTime = 0;
     }
 
-    double err = fabs(Input - Setpoint);
+    double err = fabs(Input - snapSP);
     bool isStable = false;
 
-    if (Setpoint < 50.0 && stepStartTemp > Setpoint) {
-        isStable = (Input <= Setpoint + 5.0);
+    if (snapSP < 50.0 && stepStartTemp > snapSP) {
+        isStable = (Input <= snapSP + 5.0);
     } else {
         isStable = (err <= STABLE_TOLERANCE);
     }
@@ -357,7 +365,7 @@ void runControlLoop() {
             stabStart = 0;
         }
     } else {
-        if ((now - procStart)/1000 >= holdMin*60) {
+        if ((now - procStart)/1000 >= snapHold*60) {
             if (profMode) {
                 if (++profStep < activeProfilePtr->numSteps) beginStep(profStep);
                 else {
