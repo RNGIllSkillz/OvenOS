@@ -58,3 +58,4 @@ extern volatile bool forceHistoryCapture;
 void emergencyStop(const char* reason);
 void resetRunState();
 void beginStep(int step);
+extern bool tcFirstRead;

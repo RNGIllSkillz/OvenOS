@@ -137,6 +137,8 @@ const I18N = {
     def_cust_name: "Custom Profile",
     step_def: "Step",
     lbl_min: "min",
+    chart_export: "&#128247; Export",
+    msg_export_err: "Not enough data to export.",
 
     // This block translates ESP32 string output to the UI
     backend: {
@@ -258,6 +260,8 @@ const I18N = {
     def_cust_name: "Свой профиль",
     step_def: "Шаг",
     lbl_min: "мин",
+    chart_export: "&#128247; Экспорт",
+    msg_export_err: "Нет данных для экспорта.",
 
     backend: {
       "WAITING": "ОЖИДАНИЕ",

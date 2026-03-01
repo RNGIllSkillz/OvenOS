@@ -36,43 +36,48 @@ void registerAPI() {
     server.on("/status", HTTP_GET,[](AsyncWebServerRequest *request){
         if (!request->authenticate(WEB_USER, WEB_PASS)) return request->requestAuthentication();
         
-        char buf[640]; 
-        char msgBuf[64];
+        char buf[1024];
+        char msgBuf[64] = "busy";
         char profNameBuf[33] = "";
-        
         long rssi = WiFi.RSSI(); 
         
-        bool isRunning = running;
-        bool isTimerActive = timerActive;
-        double cInput = Input;
-        double cSetpoint = Setpoint;
-        int cStep = profStep;
-        unsigned long cHold = holdMin;
-        uint32_t cProcStart = procStart;
+        // Snapshot variables safely
+        double cInput = 0, cSetpoint = 0, cKp = 0, cKi = 0, cKd = 0;
+        int cStep = -1, cSteps = 0;
+        unsigned long cHold = 0;
+        uint32_t cProcStart = 0, cRunStart = 0;
+        bool isRunning = false, isTimerActive = false, isEstop = false, isMon = false;
         
-        if (activeProfilePtr && profMode) {
-            strncpy(profNameBuf, activeProfilePtr->name, 32);
-            profNameBuf[32] = '\0';
-        }
-
-        long timeLeft = 0;
-        int holdMinV = 0;
-        
-        if (isTimerActive && isRunning && cHold > 0) {
-            uint32_t now = millis();
-            unsigned long el = (now - cProcStart) / 1000;
-            unsigned long tot = cHold * 60UL;
-            timeLeft = (el < tot) ? (long)(tot - el) : 0L;
-            holdMinV = (int)cHold;
-        }
-
         if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+            cInput = Input;
+            cSetpoint = Setpoint;
+            cStep = profStep;
+            cHold = holdMin;
+            cProcStart = procStart;
+            cRunStart = runStart;
+            isRunning = running;
+            isTimerActive = timerActive;
+            isEstop = emergencyStopped;
+            isMon = monitoring;
+            cKp = PID_KP; cKi = PID_KI; cKd = PID_KD;
+            
             strncpy(msgBuf, statusMsg, sizeof(msgBuf)-1);
+            if (activeProfilePtr && profMode) {
+                strncpy(profNameBuf, activeProfilePtr->name, 32);
+                cSteps = activeProfilePtr->numSteps;
+            }
             xSemaphoreGive(dataMutex);
-        } else {
-            strncpy(msgBuf, "busy", sizeof(msgBuf)-1);
         }
         msgBuf[sizeof(msgBuf)-1] = 0;
+        profNameBuf[32] = 0;
+
+        long timeLeft = 0;
+        int holdMinV = (int)cHold;
+        if (isTimerActive && isRunning && cHold > 0) {
+            unsigned long el = (millis() - cProcStart) / 1000;
+            unsigned long tot = cHold * 60UL;
+            timeLeft = (el < tot) ? (long)(tot - el) : 0L;
+        }
         
         snprintf(buf, sizeof(buf),
             "{\"temp\":%.1f,\"setpoint\":%.1f,\"msg\":\"%s\","
@@ -82,58 +87,58 @@ void registerAPI() {
             "\"kp\":%.2f,\"ki\":%.3f,\"kd\":%.3f}", 
             cInput, cSetpoint, msgBuf,
             isRunning ? "true" : "false",
-            monitoring ? "true" : "false",
-            cStep, 
-            (activeProfilePtr && profMode) ? activeProfilePtr->numSteps : 0,
-            profNameBuf, timeLeft, holdMinV, 
-            (millis() - runStart) / 1000UL,
-            emergencyStopped ? "true" : "false",
-            rssi,
-            PID_KP, PID_KI, PID_KD 
+            isMon ? "true" : "false",
+            cStep, cSteps, profNameBuf, timeLeft, holdMinV, 
+            (millis() - cRunStart) / 1000UL,
+            isEstop ? "true" : "false",
+            rssi, cKp, cKi, cKd 
         );
-        
         request->send(200, "application/json", buf);
     });
 
     server.on("/history", HTTP_GET,[](AsyncWebServerRequest *request){
         if (!request->authenticate(WEB_USER, WEB_PASS)) return request->requestAuthentication();
         
-        HistoryBuffer* snap = new (std::nothrow) HistoryBuffer();
-        if (!snap) { request->send(500, "text/plain", "OOM"); return; }
-
+        static HistoryBuffer snap; 
+        static volatile bool historyBusy = false;
+        
+        if (historyBusy) {
+            request->send(503, "text/plain", "Busy");
+            return;
+        }
+        historyBusy = true;
+        
         if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(20)) == pdTRUE) {
-            *snap = history; 
+            snap = history; 
             xSemaphoreGive(dataMutex);
         } 
 
-        int cnt = snap->count;
+        int cnt = snap.count;
         if (cnt == 0) {
             request->send(200, "application/octet-stream", (uint8_t*)nullptr, 0);
-            delete snap;
+            historyBusy = false;
             return;
         }
 
         AsyncResponseStream *response = request->beginResponseStream("application/octet-stream");
-        
-        // Write Header (2 bytes)
         uint16_t n = (uint16_t)cnt;
         response->write((uint8_t*)&n, 2);
 
-        // Write points (6 bytes per point)
-        int base = (snap->head - cnt + HIST_SIZE) % HIST_SIZE;
+        int base = (snap.head - cnt + HIST_SIZE) % HIST_SIZE;
         for (int i = 0; i < cnt; i++) {
             int idx = (base + i) % HIST_SIZE;
-            response->write((uint8_t*)&snap->ts_offsets[idx], 2);
-            response->write((uint8_t*)&snap->temps[idx], 2);
-            response->write((uint8_t*)&snap->sps[idx], 2);
+            response->write((uint8_t*)&snap.ts_offsets[idx], 2);
+            response->write((uint8_t*)&snap.temps[idx], 2);
+            response->write((uint8_t*)&snap.sps[idx], 2);
         }
         
         request->send(response);
-        delete snap;
+        historyBusy = false;
     });
 
     server.on("/start", HTTP_POST,[](AsyncWebServerRequest *request){
         if (!request->authenticate(WEB_USER, WEB_PASS)) return request->requestAuthentication();
+        if (!request->hasHeader("X-Oven-Auth")) { request->send(403, "text/plain", "CSRF"); return; }
         
         if (emergencyStopped) {
             request->send(409, "text/plain", "Emergency Stop Active");
@@ -162,14 +167,26 @@ void registerAPI() {
             profStep = 0;
             beginStep(0);
             running = true;
-            myPID.SetMode(AUTOMATIC);
+            
+            if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+                myPID.SetMode(AUTOMATIC);
+                xSemaphoreGive(dataMutex);
+            }
             request->send(200, "text/plain", "OK");
 
         } else if (m == "manual") {
+            double t = request->arg("temp").toDouble();
+            int tm = request->arg("time").toInt();
+            
+            if (t < 20.0 || t > SAFETY_MAX_TEMP || tm < 1 || tm > 600) { 
+                request->send(400, "text/plain", "Out of Bounds"); 
+                return; 
+            }
+            
             profMode = false;
             activeProfilePtr = nullptr;
-            Setpoint = request->arg("temp").toDouble();
-            holdMin = request->arg("time").toInt();
+            Setpoint = t;
+            holdMin = (unsigned long)tm; // Safely cast positive bounds-checked int
             running = true;
             
             if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
@@ -183,8 +200,10 @@ void registerAPI() {
         }
     });
 
-    server.on("/stop", HTTP_POST,[](AsyncWebServerRequest *request){
+    server.on("/stop", HTTP_POST,[](AsyncWebServerRequest *request){        
         if (!request->authenticate(WEB_USER, WEB_PASS)) return request->requestAuthentication();
+        if (!request->hasHeader("X-Oven-Auth")) { request->send(403, "text/plain", "CSRF"); return; }
+
         stopReflow();
         if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(50)) == pdTRUE) {
             myPID.SetMode(MANUAL);
@@ -193,9 +212,10 @@ void registerAPI() {
         request->send(200, "text/plain", "OK");
     });
 
-    server.on("/reset", HTTP_POST,[](AsyncWebServerRequest *request){
+    server.on("/reset", HTTP_POST,[](AsyncWebServerRequest *request){        
         if (!request->authenticate(WEB_USER, WEB_PASS)) return request->requestAuthentication();
-        
+        if (!request->hasHeader("X-Oven-Auth")) { request->send(403, "text/plain", "CSRF"); return; }
+
         portENTER_CRITICAL(&ssrmux);
         emergencyStopped = false;
         digitalWrite(PIN_SSR, LOW);
@@ -254,6 +274,7 @@ void registerAPI() {
 
     AsyncCallbackJsonWebHandler* customHandler = new AsyncCallbackJsonWebHandler("/setcustom",[](AsyncWebServerRequest *request, JsonVariant &json) {
         if (!request->authenticate(WEB_USER, WEB_PASS)) return request->requestAuthentication();
+        if (!request->hasHeader("X-Oven-Auth")) { request->send(403, "text/plain", "CSRF"); return; }
 
         if (running && activeProfilePtr == &customProfile) {
             request->send(409, "text/plain", "Cannot edit running profile");
@@ -298,10 +319,22 @@ void registerAPI() {
 
     server.on("/setpid", HTTP_POST,[](AsyncWebServerRequest *request){
         if (!request->authenticate(WEB_USER, WEB_PASS)) return request->requestAuthentication();
+        if (!request->hasHeader("X-Oven-Auth")) { request->send(403, "text/plain", "CSRF"); return; }
         
-        if (request->hasArg("kp")) PID_KP = request->arg("kp").toDouble();
-        if (request->hasArg("ki")) PID_KI = request->arg("ki").toDouble();
-        if (request->hasArg("kd")) PID_KD = request->arg("kd").toDouble();
+        double tkp = PID_KP, tki = PID_KI, tkd = PID_KD;
+        if (request->hasArg("kp")) tkp = request->arg("kp").toDouble();
+        if (request->hasArg("ki")) tki = request->arg("ki").toDouble();
+        if (request->hasArg("kd")) tkd = request->arg("kd").toDouble();
+        
+        // Bounds checking: prevent dangerous values that would destabilize the control loop
+        if (tkp < 0.0 || tkp > 500.0 || tki < 0.0 || tki > 50.0 || tkd < 0.0 || tkd > 500.0) {
+            request->send(400, "text/plain", "PID values out of bounds");
+            return;
+        }
+
+        PID_KP = tkp;
+        PID_KI = tki;
+        PID_KD = tkd;
         
         if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(50)) == pdTRUE) {
             myPID.SetTunings(PID_KP, PID_KI, PID_KD);
@@ -312,8 +345,9 @@ void registerAPI() {
         request->send(200, "text/plain", "OK");
     });
 
-    server.on("/monitor", HTTP_POST,[](AsyncWebServerRequest *request){
+    server.on("/monitor", HTTP_POST,[](AsyncWebServerRequest *request){        
         if (!request->authenticate(WEB_USER, WEB_PASS)) return request->requestAuthentication();
+        if (!request->hasHeader("X-Oven-Auth")) { request->send(403, "text/plain", "CSRF"); return; }
         
         bool state = request->arg("state") == "1";
         

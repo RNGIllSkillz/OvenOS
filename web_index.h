@@ -135,6 +135,7 @@ const char PAGE_HTML[] PROGMEM = R"rawliteral(
             <button class="sbtn gmode on" id="btnGLive" onclick="setGraphMode('live')" data-i18n="chart_live">Live</button>
             <button class="sbtn gmode" id="btnGHist" onclick="setGraphMode('hist')" data-i18n="chart_hist">History</button>
             <button class="sbtn gmode" onclick="syncLiveGraph()" data-i18n="chart_sync">&#8635; Sync</button>
+            <button class="sbtn gmode" onclick="exportChart()" data-i18n="chart_export">&#128247; Export</button>
           </div>
         </div>
         <div class="scale-btns">

@@ -401,7 +401,7 @@ function doStart() {
     fd.append("mode","manual"); fd.append("temp", temp); fd.append("time", time);
     addLog(LANG.msg_start_man + temp + "°C / " + time + " " + LANG.lbl_min, "ev");
     
-    fetch("/start",{method:"POST",body:fd})
+    fetch("/start",{method:"POST", headers:{"X-Oven-Auth":"1"}, body:fd})
       .then(r => { if(r.status === 409) return r.text().then(t => { throw new Error(t); }); if(!r.ok) throw new Error("HTTP "+r.status); })
       .catch(e => { setRunning(false); addLog(LANG.msg_start_err + e, "err"); });
 
@@ -413,7 +413,7 @@ function doStart() {
     fd.append("mode","profile"); fd.append("profile", pi);
     var tName = (LANG.backend && LANG.backend[profileCache[pi].name]) ? LANG.backend[profileCache[pi].name] : profileCache[pi].name;
     addLog(LANG.msg_start_prof + tName, "ev");
-    fetch("/start",{method:"POST",body:fd})
+    fetch("/start",{method:"POST", headers:{"X-Oven-Auth":"1"}, body:fd})
       .then(r => { if(!r.ok) return r.text().then(t => { throw new Error(t); }); })
       .catch(e => { setRunning(false); addLog(LANG.msg_start_err + e, "err"); });
 
@@ -425,12 +425,12 @@ function doStart() {
     var profJson = JSON.stringify({name:name, steps:steps});
     addLog(LANG.msg_start_prof + "'" + name + "'", "ev");
     
-    fetch("/setcustom", {method:"POST",headers:{"Content-Type":"application/json"},body:profJson})
+    fetch("/setcustom", {method:"POST",headers:{"Content-Type":"application/json", "X-Oven-Auth":"1"},body:profJson})
     .then(r => {
       if(!r.ok) return r.text().then(t => { throw new Error(t); });
       var fd2 = new FormData();
       fd2.append("mode","profile"); fd2.append("profile", String(CUSTOM_PROF_IDX));
-      return fetch("/start",{method:"POST",body:fd2});
+      return fetch("/start",{method:"POST", headers:{"X-Oven-Auth":"1"}, body:fd2});
     })
     .then(r => { if(!r.ok) return r.text().then(t => { throw new Error(t); }); })
     .catch(e => { setRunning(false); addLog(LANG.msg_start_err + e.message, "err"); });
@@ -446,7 +446,7 @@ function saveCustomProfile() {
   document.getElementById("custName").value = name;
   var profJson = JSON.stringify({name:name, steps:steps});
   
-  fetch("/setcustom", {method:"POST",headers:{"Content-Type":"application/json"},body:profJson})
+  fetch("/setcustom", {method:"POST",headers:{"Content-Type":"application/json", "X-Oven-Auth":"1"},body:profJson})
   .then(r => {
     if (!r.ok) return r.text().then(t => { throw new Error(t); });
     btn.innerHTML = LANG.btn_saved; btn.classList.add("saved"); btn.disabled = false;
@@ -466,7 +466,7 @@ function savePID() {
   fd.append("ki", document.getElementById("pidKi").value);
   fd.append("kd", document.getElementById("pidKd").value);
   
-  fetch("/setpid", {method:"POST", body:fd})
+  fetch("/setpid", {method:"POST", headers:{"X-Oven-Auth":"1"}, body:fd})
     .then(r => {
        if(r.ok) { addLog(LANG.msg_pid_ok, "success"); toggleSettings(); }
        else addLog(LANG.msg_pid_err, "err");
@@ -474,7 +474,7 @@ function savePID() {
 }
 
 function doStop() {
-  fetch("/stop",{method:"POST"})
+  fetch("/stop",{method:"POST", headers:{"X-Oven-Auth":"1"}})
     .then(r => {
         if (!r.ok) throw new Error("HTTP "+r.status);
         setRunning(false);
@@ -486,7 +486,7 @@ function doStop() {
 }
 
 function doReset() {
-  fetch("/reset",{method:"POST"})
+  fetch("/reset",{method:"POST", headers:{"X-Oven-Auth":"1"}})
   .then(r => { if(r.ok) addLog(LANG.msg_reset_ok, "success"); else addLog(LANG.msg_reset_err, "err"); });
 }
 
@@ -671,7 +671,7 @@ function toggleMonitor() {
   var fd = new FormData();
   fd.append("state", newState);
 
-  fetch("/monitor", {method:"POST", body:fd})
+  fetch("/monitor", {method:"POST", headers:{"X-Oven-Auth":"1"}, body:fd})
     .then(r => {
         if(r.ok) {
             if(newState==="1") {
@@ -730,6 +730,155 @@ function pollHistory() {
       historyPending = false; 
       scheduleHistory(30000); 
     });
+}
+
+// --- Graph Export ---
+
+function exportChart() {
+  // Use data from whichever mode is currently selected (Live or History)
+  var visTemps = graphMode === "live" ? liveTemps : histTemps;
+  var visSPs   = graphMode === "live" ? liveSPs   : histSPs;
+  var visTS    = graphMode === "live" ? liveTS    : histTS;
+
+  if (visTS.length < 2) {
+    alert(LANG.msg_export_err || "Not enough data to export.");
+    return;
+  }
+
+  // Create an off-screen high-res canvas for the image
+  var W = 1200;
+  var H = 600;
+  var offCanvas = document.createElement("canvas");
+  offCanvas.width = W;
+  offCanvas.height = H;
+  var ctxOff = offCanvas.getContext("2d");
+
+  // 1. Fill White Background
+  ctxOff.fillStyle = "#ffffff";
+  ctxOff.fillRect(0, 0, W, H);
+
+  var pad = { t: 60, r: 40, b: 70, l: 80 };
+  var cw = W - pad.l - pad.r;
+  var ch = H - pad.t - pad.b;
+
+  // Calculate Bounds
+  var allV = visTemps.concat(visSPs);
+  var yMin = Math.min.apply(null, allV);
+  var yMax = Math.max.apply(null, allV);
+  var yPad = (yMax - yMin) * 0.15 + 5;
+  yMin = Math.max(0, yMin - yPad);
+  yMax = yMax + yPad;
+  var yRng = yMax - yMin || 1;
+  
+  var xMin = visTS[0];
+  var xMax = visTS[visTS.length - 1];
+  var xRng = xMax - xMin || 1;
+
+  function px(x) { return pad.l + ((x - xMin) / xRng) * cw; }
+  function py(y) { return pad.t + ch - ((y - yMin) / yRng) * ch; }
+
+  // 2. Draw Title and Legend
+  ctxOff.fillStyle = "#2c3e50";
+  ctxOff.font = "bold 24px Arial, sans-serif";
+  ctxOff.textAlign = "left";
+  var exportTitle = (LANG && LANG.title) ? LANG.title : "ReflowOven";
+  ctxOff.fillText(exportTitle, pad.l, pad.t - 30);
+
+  ctxOff.font = "16px Arial, sans-serif";
+  // Blue Temperature Legend
+  ctxOff.fillStyle = "#3498db";
+  ctxOff.fillRect(pad.l + 180, pad.t - 35, 30, 4);
+  ctxOff.fillStyle = "#34495e";
+  ctxOff.fillText("Temperature", pad.l + 220, pad.t - 28);
+  // Red Setpoint Legend
+  ctxOff.fillStyle = "#e74c3c";
+  ctxOff.fillRect(pad.l + 340, pad.t - 35, 30, 4);
+  ctxOff.fillStyle = "#34495e";
+  ctxOff.fillText("Setpoint", pad.l + 380, pad.t - 28);
+
+  // 3. Draw Grid and Axes
+  ctxOff.strokeStyle = "#ecf0f1"; // Light gray grid
+  ctxOff.lineWidth = 1;
+  ctxOff.fillStyle = "#7f8c8d";
+  ctxOff.font = "14px Arial, sans-serif";
+  ctxOff.textAlign = "right";
+  ctxOff.textBaseline = "middle";
+
+  // Y-Axis Grid & Labels
+  var ySteps = 10;
+  for (var i = 0; i <= ySteps; i++) {
+    var yv = yMin + (yRng / ySteps) * i;
+    var yp = py(yv);
+    ctxOff.beginPath();
+    ctxOff.moveTo(pad.l, yp);
+    ctxOff.lineTo(pad.l + cw, yp);
+    ctxOff.stroke();
+    ctxOff.fillText(Math.round(yv), pad.l - 15, yp);
+  }
+
+  // X-Axis Grid & Labels
+  var xSteps = 12;
+  ctxOff.textAlign = "center";
+  ctxOff.textBaseline = "top";
+  for (var j = 0; j <= xSteps; j++) {
+    var xv = xMin + (xRng / xSteps) * j;
+    var xp = px(xv);
+    ctxOff.beginPath();
+    ctxOff.moveTo(xp, pad.t);
+    ctxOff.lineTo(xp, pad.t + ch);
+    ctxOff.stroke();
+    ctxOff.fillText(Math.round(xv), xp, pad.t + ch + 15);
+  }
+
+  // Outer Border Box
+  ctxOff.strokeStyle = "#bdc3c7";
+  ctxOff.lineWidth = 1.5;
+  ctxOff.strokeRect(pad.l, pad.t, cw, ch);
+
+  // Axis Titles
+  ctxOff.fillStyle = "#2c3e50";
+  ctxOff.font = "italic 16px Arial, sans-serif";
+  ctxOff.textAlign = "center";
+  // Y-Axis Title
+  ctxOff.save();
+  ctxOff.translate(pad.l - 55, pad.t + ch / 2);
+  ctxOff.rotate(-Math.PI / 2);
+  ctxOff.fillText("Temps (°C)", 0, 0);
+  ctxOff.restore();
+  // X-Axis Title
+  ctxOff.fillText("Time (s)", pad.l + cw / 2, pad.t + ch + 45);
+
+  // 4. Draw Setpoint Line (Red)
+  ctxOff.strokeStyle = "#e74c3c";
+  ctxOff.lineWidth = 3;
+  ctxOff.beginPath();
+  for (var k = 0; k < visSPs.length; k++) {
+    if (k === 0) ctxOff.moveTo(px(visTS[k]), py(visSPs[k]));
+    else ctxOff.lineTo(px(visTS[k]), py(visSPs[k]));
+  }
+  ctxOff.stroke();
+
+  // 5. Draw Temperature Line (Blue)
+  ctxOff.strokeStyle = "#3498db";
+  ctxOff.lineWidth = 3;
+  ctxOff.lineJoin = "round";
+  ctxOff.beginPath();
+  for (var n = 0; n < visTemps.length; n++) {
+    if (n === 0) ctxOff.moveTo(px(visTS[n]), py(visTemps[n]));
+    else ctxOff.lineTo(px(visTS[n]), py(visTemps[n]));
+  }
+  ctxOff.stroke();
+
+  // 6. Convert to Image and Trigger Download
+  var dataUrl = offCanvas.toDataURL("image/png");
+  var a = document.createElement("a");
+  a.href = dataUrl;
+  var dStr = new Date().toISOString().slice(0, 10);
+  a.download = "reflow_graph_" + dStr + ".png";
+  
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
 }
 
 // --- INITIALIZATION ---

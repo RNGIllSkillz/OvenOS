@@ -124,6 +124,7 @@ void resetRunState() {
     myPID.SetMode(MANUAL);
     myPID.SetOutputLimits(0, PID_WINDOW_SIZE);
     windowStartTime = millis();
+    tcFirstRead = true;
 }
 
 bool isValidTCReading(double temp) {
@@ -172,6 +173,14 @@ void updateThermocouple() {
         return;
     }
 
+    if (tcFirstRead) {
+        Input = v;
+        lastValidTemp = v;
+        tcFirstRead = false;
+        tcFailCount = 0;
+        return;
+    }
+
     if (lastValidTemp > 0.01 && fabs(v - lastValidTemp) > MAX_RISE_PER_READ) {
         tcVerifyPending = true;
         tcVerifyStartTime = now;
@@ -193,7 +202,6 @@ void runControlLoop() {
     }
 
     if (tcVerifyPending) {
-        digitalWrite(PIN_SSR, LOW);
         return; 
     }
 
@@ -202,8 +210,7 @@ void runControlLoop() {
     estopFlag = emergencyStopped;
     portEXIT_CRITICAL(&ssrmux);
 
-    if (estopFlag) { 
-        digitalWrite(PIN_SSR, LOW); 
+    if (estopFlag) {
         if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
              // Checking exact prefix using strlen safely independent of actual language
              if (strncmp(statusMsg, L_ERR_PREFIX, strlen(L_ERR_PREFIX)) != 0) {
@@ -260,8 +267,7 @@ void runControlLoop() {
         lastHistCapture = now; // Reset timer so the next interval starts counting from NOW
     }
 
-    if (!running || finished) { 
-        digitalWrite(PIN_SSR, LOW); 
+    if (!running || finished) {
         fullPowerStartTime = 0;
         if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
             if(myPID.GetMode() != MANUAL) myPID.SetMode(MANUAL);
@@ -275,8 +281,6 @@ void runControlLoop() {
         if (now - heatStartTime > HEAT_TIMEOUT_MS) { emergencyStop(L_ERR_TIMEOUT); return; }
     }
 
-    if(myPID.GetMode() != AUTOMATIC) myPID.SetMode(AUTOMATIC);
-
     if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
         if(myPID.GetMode() != AUTOMATIC) myPID.SetMode(AUTOMATIC);
         myPID.Compute();
@@ -287,10 +291,7 @@ void runControlLoop() {
     while (wElapsed >= (uint32_t)PID_WINDOW_SIZE) { 
         windowStartTime += PID_WINDOW_SIZE; 
         wElapsed -= PID_WINDOW_SIZE; 
-    }
-    
-    if (tcFailCount == 0) digitalWrite(PIN_SSR, (Output > wElapsed));
-    else digitalWrite(PIN_SSR, LOW);
+    }    
 
     if (Output >= PID_WINDOW_SIZE * 0.9) { 
         if (fullPowerStartTime == 0) {
@@ -326,7 +327,8 @@ void runControlLoop() {
             if (stabStart == 0) { 
                 stabStart = now; 
                 if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
-                    strncpy(statusMsg, L_STATE_STABLE, 63);
+                    strncpy(statusMsg, L_STATE_STABLE, sizeof(statusMsg) - 1);
+                    statusMsg[sizeof(statusMsg) - 1] = '\0';
                     forceHistoryCapture = true;
                     xSemaphoreGive(dataMutex);
                 }
@@ -337,7 +339,8 @@ void runControlLoop() {
                 heatStartTime = 0;
                 currentStepPeak = Input; 
                 if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
-                    strncpy(statusMsg, L_STATE_HOLD, 63);
+                    strncpy(statusMsg, L_STATE_HOLD, sizeof(statusMsg) - 1);
+                    statusMsg[sizeof(statusMsg) - 1] = '\0';
                     forceHistoryCapture = true;
                     xSemaphoreGive(dataMutex);
                 }
@@ -353,7 +356,8 @@ void runControlLoop() {
                     running = false; finished = true; profMode = false; 
                     digitalWrite(PIN_SSR, LOW); 
                     if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
-                        strncpy(statusMsg, L_STATE_DONE, 63);
+                        strncpy(statusMsg, L_STATE_DONE, sizeof(statusMsg) - 1);
+                        statusMsg[sizeof(statusMsg) - 1] = '\0';
                         forceHistoryCapture = true;
                         xSemaphoreGive(dataMutex);
                     }
@@ -362,7 +366,8 @@ void runControlLoop() {
                 running = false; finished = true; 
                 digitalWrite(PIN_SSR, LOW); 
                 if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
-                    strncpy(statusMsg, L_STATE_END, 63);
+                    strncpy(statusMsg, L_STATE_END, sizeof(statusMsg) - 1);
+                    statusMsg[sizeof(statusMsg) - 1] = '\0';
                     forceHistoryCapture = true;
                     xSemaphoreGive(dataMutex);
                 }

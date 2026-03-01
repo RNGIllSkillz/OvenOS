@@ -40,6 +40,7 @@ volatile bool tcVerifyPending = false;
 volatile bool forceHistoryCapture = false;
 
 bool profMode = false;
+bool tcFirstRead = true;
 int profStep = -1;
 char statusMsg[64] = L_STATE_WAIT;
 
@@ -164,14 +165,17 @@ void loop() {
         updateThermocouple();
         runControlLoop();
     }
-    uint32_t wElapsed = now - windowStartTime;
-    while (wElapsed >= PID_WINDOW_SIZE) { windowStartTime += PID_WINDOW_SIZE; wElapsed -= PID_WINDOW_SIZE; }
 
-    if (running && tcFailCount == 0 && !emergencyStopped && !tcVerifyPending) {
-        digitalWrite(PIN_SSR, (Output > wElapsed));
-    } else {
-        digitalWrite(PIN_SSR, LOW);
+    uint32_t wElapsed = now - windowStartTime;
+    while (wElapsed >= PID_WINDOW_SIZE) { 
+        windowStartTime += PID_WINDOW_SIZE; 
+        wElapsed -= PID_WINDOW_SIZE; 
     }
 
+    // Single source of truth for the SSR
+    bool safeToFire = running && !finished && !emergencyStopped 
+                   && !tcVerifyPending && (tcFailCount == 0);                   
+    digitalWrite(PIN_SSR, safeToFire && (Output > wElapsed));
+    
     delay(1); 
 }
