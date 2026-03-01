@@ -4,6 +4,7 @@ OvenOS is an enterprise-grade, highly robust ESP32-based PID temperature control
 Featuring a responsive, dark-mode web interface with live charting, strict RTOS-level thread safety, and multi-layered hardware/software thermal protections.
 
 ![alt text](https://img.shields.io/badge/Web_UI-Russian-blue) 
+![alt text](https://img.shields.io/badge/Web_UI-English-blue)
 ![alt text](https://img.shields.io/badge/Platform-ESP32-success)
 ![alt text](https://img.shields.io/badge/Framework-Arduino-orange)
 
