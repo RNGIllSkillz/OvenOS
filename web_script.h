@@ -187,7 +187,12 @@ function drawChart() {
   if (visTS.length < 2) return;
 
   var allV = visTemps.concat(visSPs);
-  var yMin = Math.min.apply(null, allV), yMax = Math.max.apply(null, allV);
+  var yMin = Infinity, yMax = -Infinity;
+  for (var m = 0; m < allV.length; m++) {
+      if (allV[m] < yMin) yMin = allV[m];
+      if (allV[m] > yMax) yMax = allV[m];
+  }
+
   var yPad = (yMax - yMin) * 0.15 + 5;
   yMin = Math.max(0, yMin - yPad); 
   yMax = yMax + yPad;
@@ -735,7 +740,6 @@ function pollHistory() {
 // --- Graph Export ---
 
 function exportChart() {
-  // Use data from whichever mode is currently selected (Live or History)
   var visTemps = graphMode === "live" ? liveTemps : histTemps;
   var visSPs   = graphMode === "live" ? liveSPs   : histSPs;
   var visTS    = graphMode === "live" ? liveTS    : histTS;
@@ -745,140 +749,169 @@ function exportChart() {
     return;
   }
 
-  // Create an off-screen high-res canvas for the image
-  var W = 1200;
-  var H = 600;
-  var offCanvas = document.createElement("canvas");
-  offCanvas.width = W;
-  offCanvas.height = H;
-  var ctxOff = offCanvas.getContext("2d");
+  // Asynchronously load the Favicon before rendering the chart
+  var img = new Image();
+  img.onload = function() { renderAndDownload(img); };
+  img.onerror = function() { renderAndDownload(null); }; // Fallback if image fails
+  img.src = "/favicon.ico";
 
-  // 1. Fill White Background
-  ctxOff.fillStyle = "#ffffff";
-  ctxOff.fillRect(0, 0, W, H);
+  function renderAndDownload(iconImg) {
+    var W = 1200;
+    var H = 600;
+    var offCanvas = document.createElement("canvas");
+    offCanvas.width = W;
+    offCanvas.height = H;
+    var ctxOff = offCanvas.getContext("2d");
 
-  var pad = { t: 60, r: 40, b: 70, l: 80 };
-  var cw = W - pad.l - pad.r;
-  var ch = H - pad.t - pad.b;
+    // 1. Fill White Background
+    ctxOff.fillStyle = "#ffffff";
+    ctxOff.fillRect(0, 0, W, H);
 
-  // Calculate Bounds
-  var allV = visTemps.concat(visSPs);
-  var yMin = Math.min.apply(null, allV);
-  var yMax = Math.max.apply(null, allV);
-  var yPad = (yMax - yMin) * 0.15 + 5;
-  yMin = Math.max(0, yMin - yPad);
-  yMax = yMax + yPad;
-  var yRng = yMax - yMin || 1;
-  
-  var xMin = visTS[0];
-  var xMax = visTS[visTS.length - 1];
-  var xRng = xMax - xMin || 1;
+    var pad = { t: 60, r: 40, b: 70, l: 80 };
+    var cw = W - pad.l - pad.r;
+    var ch = H - pad.t - pad.b;
 
-  function px(x) { return pad.l + ((x - xMin) / xRng) * cw; }
-  function py(y) { return pad.t + ch - ((y - yMin) / yRng) * ch; }
+    // Calculate Bounds
+    var allV = visTemps.concat(visSPs);
+    var yMin = Math.min.apply(null, allV);
+    var yMax = Math.max.apply(null, allV);
+    var yPad = (yMax - yMin) * 0.15 + 5;
+    yMin = Math.max(0, yMin - yPad);
+    yMax = yMax + yPad;
+    var yRng = yMax - yMin || 1;
+    
+    var xMin = visTS[0];
+    var xMax = visTS[visTS.length - 1];
+    var xRng = xMax - xMin || 1;
 
-  // 2. Draw Title and Legend
-  ctxOff.fillStyle = "#2c3e50";
-  ctxOff.font = "bold 24px Arial, sans-serif";
-  ctxOff.textAlign = "left";
-  var exportTitle = (LANG && LANG.title) ? LANG.title : "ReflowOven";
-  ctxOff.fillText(exportTitle, pad.l, pad.t - 30);
+    function px(x) { return pad.l + ((x - xMin) / xRng) * cw; }
+    function py(y) { return pad.t + ch - ((y - yMin) / yRng) * ch; }
 
-  ctxOff.font = "16px Arial, sans-serif";
-  // Blue Temperature Legend
-  ctxOff.fillStyle = "#3498db";
-  ctxOff.fillRect(pad.l + 180, pad.t - 35, 30, 4);
-  ctxOff.fillStyle = "#34495e";
-  ctxOff.fillText("Temperature", pad.l + 220, pad.t - 28);
-  // Red Setpoint Legend
-  ctxOff.fillStyle = "#e74c3c";
-  ctxOff.fillRect(pad.l + 340, pad.t - 35, 30, 4);
-  ctxOff.fillStyle = "#34495e";
-  ctxOff.fillText("Setpoint", pad.l + 380, pad.t - 28);
+    // 2. Draw Favicon, Title, and Legend
+    ctxOff.fillStyle = "#2c3e50";
+    ctxOff.font = "bold 24px Arial, sans-serif";
+    ctxOff.textAlign = "left";
+    ctxOff.textBaseline = "alphabetic";
+    
+    var exportTitle = (LANG && LANG.title) ? LANG.title : "ReflowOven";
+    var textX = pad.l;
 
-  // 3. Draw Grid and Axes
-  ctxOff.strokeStyle = "#ecf0f1"; // Light gray grid
-  ctxOff.lineWidth = 1;
-  ctxOff.fillStyle = "#7f8c8d";
-  ctxOff.font = "14px Arial, sans-serif";
-  ctxOff.textAlign = "right";
-  ctxOff.textBaseline = "middle";
+    // Draw the icon if it loaded successfully
+    if (iconImg) {
+      ctxOff.drawImage(iconImg, pad.l, pad.t - 49, 24, 24);
+      textX += 34; // Shift the title text to the right to make room
+    }
+    
+    ctxOff.fillText(exportTitle, textX, pad.t - 30);
 
-  // Y-Axis Grid & Labels
-  var ySteps = 10;
-  for (var i = 0; i <= ySteps; i++) {
-    var yv = yMin + (yRng / ySteps) * i;
-    var yp = py(yv);
+    ctxOff.font = "16px Arial, sans-serif";
+    // Blue Temperature Legend (Shifted right to avoid long titles)
+    ctxOff.fillStyle = "#3498db";
+    ctxOff.fillRect(pad.l + 260, pad.t - 35, 30, 4);
+    ctxOff.fillStyle = "#34495e";
+    ctxOff.fillText("Temperature", pad.l + 300, pad.t - 28);
+    
+    // Red Setpoint Legend
+    ctxOff.fillStyle = "#e74c3c";
+    ctxOff.fillRect(pad.l + 420, pad.t - 35, 30, 4);
+    ctxOff.fillStyle = "#34495e";
+    ctxOff.fillText("Setpoint", pad.l + 460, pad.t - 28);
+
+    // 3. Draw Grid and Axes
+    ctxOff.strokeStyle = "#ecf0f1";
+    ctxOff.lineWidth = 1;
+    ctxOff.fillStyle = "#7f8c8d";
+    ctxOff.font = "14px Arial, sans-serif";
+    ctxOff.textAlign = "right";
+    ctxOff.textBaseline = "middle";
+
+    var ySteps = 10;
+    for (var i = 0; i <= ySteps; i++) {
+      var yv = yMin + (yRng / ySteps) * i;
+      var yp = py(yv);
+      ctxOff.beginPath();
+      ctxOff.moveTo(pad.l, yp);
+      ctxOff.lineTo(pad.l + cw, yp);
+      ctxOff.stroke();
+      ctxOff.fillText(Math.round(yv), pad.l - 15, yp);
+    }
+
+    var xSteps = 12;
+    ctxOff.textAlign = "center";
+    ctxOff.textBaseline = "top";
+    for (var j = 0; j <= xSteps; j++) {
+      var xv = xMin + (xRng / xSteps) * j;
+      var xp = px(xv);
+      ctxOff.beginPath();
+      ctxOff.moveTo(xp, pad.t);
+      ctxOff.lineTo(xp, pad.t + ch);
+      ctxOff.stroke();
+      ctxOff.fillText(Math.round(xv), xp, pad.t + ch + 15);
+    }
+
+    ctxOff.strokeStyle = "#bdc3c7";
+    ctxOff.lineWidth = 1.5;
+    ctxOff.strokeRect(pad.l, pad.t, cw, ch);
+
+    ctxOff.fillStyle = "#2c3e50";
+    ctxOff.font = "italic 16px Arial, sans-serif";
+    ctxOff.textAlign = "center";
+    ctxOff.save();
+    ctxOff.translate(pad.l - 55, pad.t + ch / 2);
+    ctxOff.rotate(-Math.PI / 2);
+    ctxOff.fillText("Temps (\u00B0C)", 0, 0); // Unicode degree symbol
+    ctxOff.restore();
+    ctxOff.fillText("Time (s)", pad.l + cw / 2, pad.t + ch + 45);
+
+    // 4. Draw Setpoint Line (Red)
+    ctxOff.strokeStyle = "#e74c3c";
+    ctxOff.lineWidth = 3;
     ctxOff.beginPath();
-    ctxOff.moveTo(pad.l, yp);
-    ctxOff.lineTo(pad.l + cw, yp);
+    for (var k = 0; k < visSPs.length; k++) {
+      if (k === 0) ctxOff.moveTo(px(visTS[k]), py(visSPs[k]));
+      else ctxOff.lineTo(px(visTS[k]), py(visSPs[k]));
+    }
     ctxOff.stroke();
-    ctxOff.fillText(Math.round(yv), pad.l - 15, yp);
-  }
 
-  // X-Axis Grid & Labels
-  var xSteps = 12;
-  ctxOff.textAlign = "center";
-  ctxOff.textBaseline = "top";
-  for (var j = 0; j <= xSteps; j++) {
-    var xv = xMin + (xRng / xSteps) * j;
-    var xp = px(xv);
+    // 5. Draw Temperature Line (Blue)
+    ctxOff.strokeStyle = "#3498db";
+    ctxOff.lineWidth = 3;
+    ctxOff.lineJoin = "round";
     ctxOff.beginPath();
-    ctxOff.moveTo(xp, pad.t);
-    ctxOff.lineTo(xp, pad.t + ch);
+    for (var n = 0; n < visTemps.length; n++) {
+      if (n === 0) ctxOff.moveTo(px(visTS[n]), py(visTemps[n]));
+      else ctxOff.lineTo(px(visTS[n]), py(visTemps[n]));
+    }
     ctxOff.stroke();
-    ctxOff.fillText(Math.round(xv), xp, pad.t + ch + 15);
+
+    // 6. BLOB Download (Suppresses Insecure Data URI warning)
+    if (offCanvas.toBlob) {
+      offCanvas.toBlob(function(blob) {
+        var url = URL.createObjectURL(blob);
+        var a = document.createElement("a");
+        a.href = url;
+        var dStr = new Date().toISOString().slice(0, 10);
+        a.download = "reflow_graph_" + dStr + ".png";
+        
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        
+        // Clean up memory
+        setTimeout(function() { URL.revokeObjectURL(url); }, 200);
+      }, "image/png");
+    } else {
+      // Fallback for older browsers
+      var dataUrl = offCanvas.toDataURL("image/png");
+      var a2 = document.createElement("a");
+      a2.href = dataUrl;
+      var dStr2 = new Date().toISOString().slice(0, 10);
+      a2.download = "reflow_graph_" + dStr2 + ".png";
+      document.body.appendChild(a2);
+      a2.click();
+      document.body.removeChild(a2);
+    }
   }
-
-  // Outer Border Box
-  ctxOff.strokeStyle = "#bdc3c7";
-  ctxOff.lineWidth = 1.5;
-  ctxOff.strokeRect(pad.l, pad.t, cw, ch);
-
-  // Axis Titles
-  ctxOff.fillStyle = "#2c3e50";
-  ctxOff.font = "italic 16px Arial, sans-serif";
-  ctxOff.textAlign = "center";
-  // Y-Axis Title
-  ctxOff.save();
-  ctxOff.translate(pad.l - 55, pad.t + ch / 2);
-  ctxOff.rotate(-Math.PI / 2);
-  ctxOff.fillText("Temps (°C)", 0, 0);
-  ctxOff.restore();
-  // X-Axis Title
-  ctxOff.fillText("Time (s)", pad.l + cw / 2, pad.t + ch + 45);
-
-  // 4. Draw Setpoint Line (Red)
-  ctxOff.strokeStyle = "#e74c3c";
-  ctxOff.lineWidth = 3;
-  ctxOff.beginPath();
-  for (var k = 0; k < visSPs.length; k++) {
-    if (k === 0) ctxOff.moveTo(px(visTS[k]), py(visSPs[k]));
-    else ctxOff.lineTo(px(visTS[k]), py(visSPs[k]));
-  }
-  ctxOff.stroke();
-
-  // 5. Draw Temperature Line (Blue)
-  ctxOff.strokeStyle = "#3498db";
-  ctxOff.lineWidth = 3;
-  ctxOff.lineJoin = "round";
-  ctxOff.beginPath();
-  for (var n = 0; n < visTemps.length; n++) {
-    if (n === 0) ctxOff.moveTo(px(visTS[n]), py(visTemps[n]));
-    else ctxOff.lineTo(px(visTS[n]), py(visTemps[n]));
-  }
-  ctxOff.stroke();
-
-  // 6. Convert to Image and Trigger Download
-  var dataUrl = offCanvas.toDataURL("image/png");
-  var a = document.createElement("a");
-  a.href = dataUrl;
-  var dStr = new Date().toISOString().slice(0, 10);
-  a.download = "reflow_graph_" + dStr + ".png";
-  
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
 }
 
 // --- INITIALIZATION ---

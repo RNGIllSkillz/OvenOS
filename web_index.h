@@ -17,7 +17,7 @@ const char PAGE_HTML[] PROGMEM = R"rawliteral(
   <div class="logo"><span data-i18n="title">CGF Oven</span> &middot; <em data-i18n="subtitle">Temperature Controller</em></div>
   <div style="display:flex; gap:10px; align-items:center;">
   
-    <select id="langSel" onchange="changeLang()" style="background:#161a1d; color:var(--mut); border:1px solid var(--bdr); border-radius:3px; padding:2px 4px; font-size:0.75rem; height:24px; outline:none; cursor:pointer;">
+    <select id="langSel" onchange="changeLang()">
       <option value="en">EN</option>
       <option value="ru">RU</option>
     </select>

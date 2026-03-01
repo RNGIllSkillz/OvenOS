@@ -306,14 +306,19 @@ void registerAPI() {
             count++;
         }
 
-        sanitizeStr(customName, nameIn, sizeof(customName));
-        customProfile.name = customName;
-        for (int k = 0; k < count; k++) customProfile.steps[k] = tempSteps[k];
-        customProfile.numSteps = count;
-        hasCustomProfile = true;
-        saveCustomProfile();
-
-        request->send(200, "text/plain", "OK");
+        if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(50)) == pdTRUE) {
+            sanitizeStr(customName, nameIn, sizeof(customName));
+            customProfile.name = customName;
+            for (int k = 0; k < count; k++) customProfile.steps[k] = tempSteps[k];
+            customProfile.numSteps = count;
+            hasCustomProfile = true;
+            xSemaphoreGive(dataMutex);
+            
+            saveCustomProfile();
+            request->send(200, "text/plain", "OK");
+        } else {
+            request->send(503, "text/plain", "Busy");
+        }
     }); 
     
     customHandler->setMaxContentLength(2048); 
