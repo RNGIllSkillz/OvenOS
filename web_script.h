@@ -10,7 +10,7 @@ var graphMode = "live";
 var prevMsg = "";
 var prevStep = -1;
 
-var histTemps =[], histSPs =[], histTS =[];
+var histTemps =[], histSPs =[], histTS = [];
 var liveTemps = [], liveSPs =[], liveTS =[];
 var liveStartWall = 0;
 var LIVE_MAX = 36000; 
@@ -23,6 +23,27 @@ var chartScale = 600;
 var canvas = document.getElementById("chart");
 var ctx = canvas.getContext("2d");
 var isSettingsOpen = false; 
+
+// --- LOCALIZATION LOGIC ---
+function changeLang() {
+  var sel = document.getElementById("langSel");
+  localStorage.setItem("oven_lang", sel.value);
+  location.reload();
+}
+
+function initI18n() {
+  var sel = document.getElementById("langSel");
+  if(sel) sel.value = localStorage.getItem('oven_lang') || 'en';
+
+  document.querySelectorAll('[data-i18n]').forEach(function(el) {
+    var key = el.getAttribute('data-i18n');
+    if (LANG && LANG[key]) {
+      if (el.tagName === 'INPUT' && el.type !== 'button') el.placeholder = LANG[key];
+      else el.innerHTML = LANG[key];
+    }
+  });
+  if (LANG) document.title = LANG.title;
+}
 
 // --- HELPER FUNCTIONS ---
 
@@ -49,7 +70,7 @@ function escapeHtml(text) {
 }
 
 function sanitize(str) {
-  return str.replace(/["'\\\/\x00-\x1f]/g, "").trim().slice(0, 31) || "Без имени";
+  return str.replace(/["'\\\/\x00-\x1f]/g, "").trim().slice(0, 31) || LANG.def_cust_name;
 }
 
 function addLog(msg, cls) {
@@ -82,7 +103,7 @@ function setGraphMode(m) {
 
 function syncLiveGraph() {
   if (histTS.length === 0) {
-    addLog("Архив пуст. Синхронизация невозможна.", "warn");
+    addLog(LANG.msg_sync_empty, "warn");
     return;
   }
   
@@ -111,10 +132,10 @@ function syncLiveGraph() {
       liveSPs = liveSPs.slice(excess);
     }
     
-    addLog("Добавлено " + added + " точек из архива в Live", "success");
+    addLog(LANG.msg_sync_added + added + LANG.msg_sync_pts, "success");
     if (graphMode === "live") drawChart();
   } else {
-    addLog("Live график уже содержит все архивные данные", "ev");
+    addLog(LANG.msg_sync_skip, "ev");
   }
 }
 
@@ -144,7 +165,7 @@ function drawChart() {
     ctx.fillStyle = "#4a5058"; 
     ctx.font = "13px 'Share Tech Mono'";
     ctx.textAlign = "center";
-    ctx.fillText(graphMode === "live" ? "Ожидание потока..." : "Ожидание архива...", W/2, H/2);
+    ctx.fillText(graphMode === "live" ? LANG.chart_wait_live : LANG.chart_wait_hist, W/2, H/2);
     return;
   }
   
@@ -230,18 +251,18 @@ function drawChart() {
 
   ctx.fillStyle="#e8900a"; ctx.fillRect(pad.l,H-14,16,3);
   ctx.fillStyle="#d4cfc9"; ctx.font="10px 'Share Tech Mono'"; ctx.textAlign="left";
-  ctx.fillText("Темп.", pad.l+20, H-10);
+  ctx.fillText(LANG.chart_lbl_temp, pad.l+20, H-10);
   ctx.strokeStyle="#3ab0e8"; ctx.lineWidth=1.5; ctx.setLineDash([4,3]);
   ctx.beginPath(); ctx.moveTo(pad.l+68,H-12); ctx.lineTo(pad.l+84,H-12); ctx.stroke();
   ctx.setLineDash([]); ctx.fillStyle="#d4cfc9";
-  ctx.fillText("Цель", pad.l+88, H-10);
+  ctx.fillText(LANG.chart_lbl_target, pad.l+88, H-10);
 }
 
 // --- PROFILE LOADING ---
 
 function loadProfiles() {
   var sel = document.getElementById("profSel");
-  sel.innerHTML = "<option>Загрузка...</option>";
+  sel.innerHTML = "<option>" + LANG.prof_loading + "</option>";
   sel.disabled = true;
 
   fetch("/profiles")
@@ -253,7 +274,8 @@ function loadProfiles() {
       data.forEach((p, index) => {
         var opt = document.createElement("option");
         opt.value = index;
-        opt.textContent = p.name;
+        var tName = (LANG.backend && LANG.backend[p.name]) ? LANG.backend[p.name] : p.name;
+        opt.textContent = tName;
         sel.appendChild(opt);
       });
       
@@ -262,8 +284,8 @@ function loadProfiles() {
       renderPreview(); 
     })
     .catch(e => {
-      sel.innerHTML = "<option>Ошибка загрузки</option>";
-      addLog("Ошибка профилей: "+e, "err");
+      sel.innerHTML = "<option>" + LANG.prof_err + "</option>";
+      addLog(LANG.prof_err + ": " + e, "err");
     });
 }
 
@@ -274,7 +296,9 @@ function renderPreview() {
   var steps = profileCache[idx].steps;
   var h = "";
   for (var i=0; i<steps.length; i++) {
-    h += "<div class='prow'><span class='pname'>"+escapeHtml(steps[i].l)+"</span><span>"+steps[i].t+"C / "+steps[i].h+"мин</span></div>";
+    var rawLabel = steps[i].l;
+    var tLabel = (LANG.backend && LANG.backend[rawLabel]) ? LANG.backend[rawLabel] : rawLabel;
+    h += "<div class='prow'><span class='pname'>"+escapeHtml(tLabel)+"</span><span>"+steps[i].t+"&deg;C / "+steps[i].h+" "+LANG.lbl_min+"</span></div>";
   }
   document.getElementById("profPreview").innerHTML = h;
 }
@@ -290,11 +314,11 @@ function toggleSettings() {
   if (isSettingsOpen) {
     main.classList.add("hidden");
     sets.classList.add("on");
-    title.textContent = "Настройки PID";
+    title.textContent = LANG.ctrl_settings;
   } else {
     main.classList.remove("hidden");
     sets.classList.remove("on");
-    title.textContent = "Модель управления";
+    title.textContent = LANG.ctrl_title;
   }
 }
 
@@ -309,14 +333,14 @@ function switchMode(m) {
   document.getElementById("customGrp").classList.toggle("on", m==="custom");
   if (m==="profile") renderPreview();
   if (m==="custom" && document.getElementById("stepList").children.length===0) {
-    addCustomStep("Преднагрев", 150, 30);
-    addCustomStep("Охлаждение", 25, 10);
+    addCustomStep(LANG.def_step_heat, 150, 30);
+    addCustomStep(LANG.def_step_cool, 25, 10);
   }
 }
 
 var stepCounter = 0;
 function addCustomStep(label, temp, hold) {
-  label = label || "Шаг"; 
+  label = label || LANG.step_def; 
   temp = validateNumber(temp, 0, 280, 100); 
   hold = validateNumber(hold, 1, 600, 10);
   
@@ -326,11 +350,11 @@ function addCustomStep(label, temp, hold) {
   div.id = id;
   
   var inLabel = document.createElement("input"); 
-  inLabel.type="text"; inLabel.value=label; inLabel.maxLength=23; inLabel.placeholder="Название";
+  inLabel.type="text"; inLabel.value=label; inLabel.maxLength=23; inLabel.placeholder=LANG.step_placeholder;
   var inTemp = document.createElement("input"); 
-  inTemp.type="number"; inTemp.value=temp; inTemp.min=0; inTemp.max=280; inTemp.placeholder="°C";
+  inTemp.type="number"; inTemp.value=temp; inTemp.min=0; inTemp.max=280; 
   var inHold = document.createElement("input"); 
-  inHold.type="number"; inHold.value=hold; inHold.min=1; inHold.max=600; inHold.placeholder="мин";
+  inHold.type="number"; inHold.value=hold; inHold.min=1; inHold.max=600; 
   var btnDel = document.createElement("button"); 
   btnDel.className="step-del"; btnDel.textContent="×";
   btnDel.onclick = function(){ var el = document.getElementById(id); if(el) el.remove(); };
@@ -345,7 +369,7 @@ function getCustomSteps() {
   for (var i=0; i<rows.length; i++) {
     var inputs = rows[i].querySelectorAll("input");
     if (inputs.length < 3) continue;
-    var label = sanitize(inputs[0].value) || "Step";
+    var label = sanitize(inputs[0].value) || LANG.step_def;
     var temp = validateNumber(inputs[1].value, 0, 280, 25);
     var hold = validateNumber(inputs[2].value, 1, 600, 1);
     inputs[0].value = label; inputs[1].value = temp; inputs[2].value = hold;
@@ -366,7 +390,7 @@ function doStart() {
   var fd = new FormData();
   
   setRunning(true);
-  histTemps = []; histSPs =[]; histTS =[];
+  histTemps =[]; histSPs = []; histTS =[];
   liveTemps =[]; liveSPs =[]; liveTS =[];
   liveStartWall = 0;
   drawChart();
@@ -375,30 +399,31 @@ function doStart() {
     var temp = validateNumber(document.getElementById("tTemp").value, 0, 280, 100);
     var time = validateNumber(document.getElementById("tDur").value, 1, 600, 10);
     fd.append("mode","manual"); fd.append("temp", temp); fd.append("time", time);
-    addLog("Запуск: Ручной режим "+temp+"°C / "+time+"мин", "ev");
+    addLog(LANG.msg_start_man + temp + "°C / " + time + " " + LANG.lbl_min, "ev");
     
     fetch("/start",{method:"POST",body:fd})
       .then(r => { if(r.status === 409) return r.text().then(t => { throw new Error(t); }); if(!r.ok) throw new Error("HTTP "+r.status); })
-      .catch(e => { setRunning(false); addLog("Ошибка запуска: "+e, "err"); });
+      .catch(e => { setRunning(false); addLog(LANG.msg_start_err + e, "err"); });
 
   } else if (mode === "profile") {
     var pi = parseInt(document.getElementById("profSel").value);
     if (isNaN(pi) || pi < 0 || pi >= profileCache.length) {
-         addLog("Неверный профиль", "err"); setRunning(false); return;
+         addLog(LANG.msg_prof_invalid, "err"); setRunning(false); return;
     }
     fd.append("mode","profile"); fd.append("profile", pi);
-    addLog("Запуск: "+profileCache[pi].name, "ev");
+    var tName = (LANG.backend && LANG.backend[profileCache[pi].name]) ? LANG.backend[profileCache[pi].name] : profileCache[pi].name;
+    addLog(LANG.msg_start_prof + tName, "ev");
     fetch("/start",{method:"POST",body:fd})
       .then(r => { if(!r.ok) return r.text().then(t => { throw new Error(t); }); })
-      .catch(e => { setRunning(false); addLog("Ошибка запуска: "+e, "err"); });
+      .catch(e => { setRunning(false); addLog(LANG.msg_start_err + e, "err"); });
 
   } else {
     var steps = getCustomSteps();
-    if (steps.length === 0) { alert("Добавьте хотя бы один шаг."); setRunning(false); return; }
-    var name = sanitize(document.getElementById("custName").value) || "Свой";
+    if (steps.length === 0) { alert(LANG.msg_prof_req_step); setRunning(false); return; }
+    var name = sanitize(document.getElementById("custName").value) || LANG.def_cust_name;
     document.getElementById("custName").value = name;
     var profJson = JSON.stringify({name:name, steps:steps});
-    addLog("Запуск: Свой '"+name+"'", "ev");
+    addLog(LANG.msg_start_prof + "'" + name + "'", "ev");
     
     fetch("/setcustom", {method:"POST",headers:{"Content-Type":"application/json"},body:profJson})
     .then(r => {
@@ -408,30 +433,30 @@ function doStart() {
       return fetch("/start",{method:"POST",body:fd2});
     })
     .then(r => { if(!r.ok) return r.text().then(t => { throw new Error(t); }); })
-    .catch(e => { setRunning(false); addLog("Ошибка: "+e.message, "err"); });
+    .catch(e => { setRunning(false); addLog(LANG.msg_start_err + e.message, "err"); });
   }
 }
 
 function saveCustomProfile() {
   var steps = getCustomSteps();
-  if (steps.length === 0) { alert("Сначала добавьте хотя бы один шаг."); return; }
+  if (steps.length === 0) { alert(LANG.msg_prof_req_step); return; }
   var btn = document.querySelector(".bsave");
-  btn.textContent = "Сохранение..."; btn.disabled = true;
-  var name = sanitize(document.getElementById("custName").value) || "Custom";
+  btn.innerHTML = LANG.btn_saving; btn.disabled = true;
+  var name = sanitize(document.getElementById("custName").value) || LANG.def_cust_name;
   document.getElementById("custName").value = name;
   var profJson = JSON.stringify({name:name, steps:steps});
   
   fetch("/setcustom", {method:"POST",headers:{"Content-Type":"application/json"},body:profJson})
   .then(r => {
     if (!r.ok) return r.text().then(t => { throw new Error(t); });
-    btn.innerHTML = "&#10003; Сохранено!"; btn.classList.add("saved"); btn.disabled = false;
-    addLog("Профиль сохранён: '"+name+"'", "success");
-    setTimeout(() => { btn.innerHTML = "&#10003; Сохранить профиль"; btn.classList.remove("saved"); }, 2500);
+    btn.innerHTML = LANG.btn_saved; btn.classList.add("saved"); btn.disabled = false;
+    addLog(LANG.msg_prof_saved + "'" + name + "'", "success");
+    setTimeout(() => { btn.innerHTML = LANG.btn_save; btn.classList.remove("saved"); }, 2500);
   })
   .catch((e) => {
-    btn.textContent = "Ошибка сохранения"; btn.disabled = false;
-    addLog("Ошибка: " + e.message, "err");
-    setTimeout(() => { btn.innerHTML = "&#10003; Сохранить профиль"; }, 2500);
+    btn.innerHTML = LANG.btn_save_err; btn.disabled = false;
+    addLog(LANG.msg_prof_save_err + ": " + e.message, "err");
+    setTimeout(() => { btn.innerHTML = LANG.btn_save; }, 2500);
   });
 }
 
@@ -443,8 +468,8 @@ function savePID() {
   
   fetch("/setpid", {method:"POST", body:fd})
     .then(r => {
-       if(r.ok) { addLog("PID сохранен", "success"); toggleSettings(); }
-       else addLog("Ошибка сохранения PID", "err");
+       if(r.ok) { addLog(LANG.msg_pid_ok, "success"); toggleSettings(); }
+       else addLog(LANG.msg_pid_err, "err");
     });
 }
 
@@ -453,16 +478,16 @@ function doStop() {
     .then(r => {
         if (!r.ok) throw new Error("HTTP "+r.status);
         setRunning(false);
-        addLog("Остановка выполнена", "warn");
+        addLog(LANG.msg_stop_ok, "warn");
     })
     .catch(e => {
-        addLog("ОШИБКА ОСТАНОВКИ: " + e, "err");
+        addLog(LANG.msg_stop_err + e, "err");
     });
 }
 
 function doReset() {
   fetch("/reset",{method:"POST"})
-  .then(r => { if(r.ok) addLog("Сброс ошибки выполнен", "success"); else addLog("Ошибка сброса", "err"); });
+  .then(r => { if(r.ok) addLog(LANG.msg_reset_ok, "success"); else addLog(LANG.msg_reset_err, "err"); });
 }
 
 // --- POLLING ---
@@ -503,10 +528,10 @@ function pollStatus() {
       else { btnGear.disabled = false; }
 
       if (d.emergency) {
-          badge.textContent = "! АВАРИЯ !"; badge.className = "crit";
+          badge.textContent = LANG.badge_alarm; badge.className = "crit";
           btnStart.style.display = "none"; btnStop.style.display = "none"; btnReset.style.display = "block";
       } else {
-          badge.textContent = "* Онлайн"; badge.className = "live";
+          badge.textContent = "* " + LANG.badge_online; badge.className = "live";
           btnStart.style.display = "block"; btnStop.style.display = "block"; btnReset.style.display = "none";
       }
 
@@ -514,12 +539,12 @@ function pollStatus() {
           btnMon.classList.add("mon-active");
           btnMon.style.borderColor = "var(--blu)";
           btnMon.style.color = "var(--blu)";
-          btnMon.innerHTML = "&#9632; СТОП";
+          btnMon.innerHTML = LANG.btn_monitor_stop;
       } else {
           btnMon.classList.remove("mon-active");
           btnMon.style.borderColor = "var(--bdr)";
           btnMon.style.color = "var(--mut)";
-          btnMon.innerHTML = "&#128200; МОНИТОР";
+          btnMon.innerHTML = LANG.btn_monitor;
       }
       btnMon.disabled = d.running;
 
@@ -537,7 +562,7 @@ function pollStatus() {
         if (Math.abs(expectedLive - elapsed) > 5) {
           liveStartWall = Date.now() - (elapsed * 1000);
           if (elapsed < expectedLive && liveTS.length > 0 && elapsed < liveTS[liveTS.length-1]) {
-             liveTS =[]; liveTemps = []; liveSPs =[];
+             liveTS =[]; liveTemps =[]; liveSPs =[];
           }
         }
       }
@@ -551,18 +576,31 @@ function pollStatus() {
          if (graphMode === "live") drawChart();
       }
 
-      document.getElementById("spV").textContent = sp ? sp.toFixed(0) : "---";
+      document.getElementById("spV").textContent = sp ? sp.toFixed(0) : LANG.target_idle;
 
-      var pill = document.getElementById("pill");
-      var msg = String(d.msg || "Неизвестно");
-      pill.textContent = msg; pill.className = "pill";
+      // Translate the Backend C++ Response Key into User's Language
+      var rawMsg = String(d.msg || "UNKNOWN");
+      var translatedMsg = (LANG.backend && LANG.backend[rawMsg]) ? LANG.backend[rawMsg] : rawMsg;
+
+      // Handle custom trailing Alarm messages
+      if (rawMsg.startsWith("ALARM: ")) {
+          var reason = rawMsg.substring(7);
+          var translatedReason = (LANG.backend && LANG.backend[reason]) ? LANG.backend[reason] : reason;
+          var alarmPrefix = (LANG.backend && LANG.backend["ALARM: "]) ? LANG.backend["ALARM: "] : "ALARM: ";
+          translatedMsg = alarmPrefix + translatedReason;
+      }
       
-      if (/НАГРЕВ|СТАБИЛ|Сушка|Отжиг|Оплавление|Выдержка|Преднагрев|Пред/.test(msg)) {
-          pill.classList.add("heat");
-      } else if (/ПОДДЕРЖКА|ЗАВЕРШЕН|КОНЕЦ|ГОТОВО/.test(msg)) {
-          pill.classList.add("hold");
-      } else if (/АВАРИЯ|ОСТАНОВКА|TIMEOUT|FAULT|SPIKE|OVERHEAT|ПАДЕНИЕ|РАЗГОН|ОСТАНОВЛЕНО/.test(msg)) {
+      var pill = document.getElementById("pill");
+      pill.textContent = translatedMsg; 
+      pill.className = "pill";
+      
+      // Dynamic translation-safe color logic evaluates ENGLISH RAW strings only
+      if (rawMsg.startsWith("ALARM:") || rawMsg === "STOPPED") {
           pill.classList.add("err");
+      } else if (rawMsg === "HOLD" || rawMsg === "DONE" || rawMsg === "END") {
+          pill.classList.add("hold");
+      } else if (rawMsg !== "WAITING" && rawMsg !== "IDLE") {
+          pill.classList.add("heat"); 
       }
 
       if(!d.emergency) setRunning(d.running);
@@ -582,24 +620,26 @@ function pollStatus() {
       var sb = document.getElementById("stepSub");
       var ds = document.getElementById("dots");
       if (d.profStep >= 0 && d.profName) {
-        sn.textContent = d.profName;
-        sb.textContent = "Шаг "+(d.profStep+1)+" из "+d.profSteps+" — "+msg;
+        var tProfName = (LANG.backend && LANG.backend[d.profName]) ? LANG.backend[d.profName] : d.profName;
+        sn.textContent = tProfName;
+        sb.textContent = LANG.msg_step + (d.profStep+1) + LANG.msg_of + d.profSteps + " — " + translatedMsg;
         var dh = "";
         for (var i=0; i<d.profSteps; i++) {
           var dc = i<d.profStep?"done":(i===d.profStep?"active":"");
           dh += "<div class='dot "+dc+"'></div>";
         }
         ds.innerHTML = dh;
-        if (d.profStep !== prevStep) { addLog("Шаг "+(d.profStep+1)+"/"+d.profSteps+": "+msg, "ev"); prevStep = d.profStep; }
+        if (d.profStep !== prevStep) { addLog(LANG.msg_step + (d.profStep+1) + "/" + d.profSteps + ": " + translatedMsg, "ev"); prevStep = d.profStep; }
       } else {
-        sn.textContent = d.running?"Ручной режим":"--"; sb.textContent=""; ds.innerHTML="";
+        sn.textContent = d.running ? LANG.msg_manual_mode : "--"; sb.textContent=""; ds.innerHTML="";
       }
 
-      if (msg !== prevMsg) { 
+      if (rawMsg !== prevMsg) { 
         var logCls = "ev";
-        if (/АВАРИЯ|TIMEOUT|FAULT|SPIKE|OVERHEAT|ПАДЕНИЕ|РАЗГОН|ОСТАНОВЛЕНО/.test(msg)) logCls = "err";
-        else if (/ПОДДЕРЖКА|ЗАВЕРШЕН|КОНЕЦ|ГОТОВО/.test(msg)) logCls = "success";
-        addLog("Состояние: "+msg, logCls); prevMsg = msg; 
+        if (rawMsg.startsWith("ALARM:") || rawMsg === "STOPPED") logCls = "err";
+        else if (rawMsg === "HOLD" || rawMsg === "DONE" || rawMsg === "END") logCls = "success";
+        
+        addLog(LANG.msg_state + translatedMsg, logCls); prevMsg = rawMsg; 
       }
       
       if (d.kp !== undefined) {
@@ -613,7 +653,7 @@ function pollStatus() {
     })
     .catch(() => {
       statusPending = false; failCount++;
-      if (failCount > 3) { document.getElementById("badge").textContent = "* ПОМЕРЛО"; document.getElementById("badge").className = ""; }
+      if (failCount > 3) { document.getElementById("badge").textContent = LANG.msg_dead; document.getElementById("badge").className = ""; }
       scheduleStatus(3000); 
     });
 }
@@ -635,11 +675,11 @@ function toggleMonitor() {
     .then(r => {
         if(r.ok) {
             if(newState==="1") {
-                addLog("Мониторинг запущен", "ev");
+                addLog(LANG.msg_mon_start, "ev");
                 histTemps=[]; histSPs=[]; histTS=[]; liveTemps=[]; liveSPs=[]; liveTS=[];
                 liveStartWall = 0; 
             } else {
-                addLog("Мониторинг остановлен", "ev");
+                addLog(LANG.msg_mon_stop, "ev");
             }
         }
     });
@@ -648,25 +688,52 @@ function toggleMonitor() {
 function pollHistory() {
   if (historyPending) { scheduleHistory(30000); return; }
   historyPending = true;
+
   fetch("/history")
-    .then(r => r.json())
-    .then(d => {
+    .then(r => r.arrayBuffer())
+    .then(buf => {
       historyPending = false;
-      if (d.ts && Array.isArray(d.ts) && d.ts.length > 0) {
-        histTemps = []; histSPs =[]; histTS =[];
-        for (var hi = 0; hi < d.ts.length; hi++) {
-          histTemps.push(validateNumber(d.temps[hi], -50, 500, 0));
-          histSPs.push(validateNumber(d.sps[hi], 0, 300, 0));
-          histTS.push(validateNumber(d.ts[hi], 0, 86400000, 0));
-        }
+      
+      // If empty or no points
+      if (buf.byteLength < 2) {
+        histTemps = []; histSPs = []; histTS =[];
         if (graphMode === "hist") drawChart();
+        scheduleHistory(30000);
+        return;
       }
-      scheduleHistory(30000); 
+
+      const dv = new DataView(buf);
+      let offset = 0;
+      const count = dv.getUint16(offset, true); offset += 2;
+
+      // Abort if packet was cut short somehow
+      if (buf.byteLength < 2 + (count * 6)) {
+        scheduleHistory(30000);
+        return;
+      }
+
+      histTemps = new Array(count);
+      histSPs   = new Array(count);
+      histTS    = new Array(count);
+
+      // Unpack 6-byte blocks (Time, Temp, Setpoint)
+      for (let i = 0; i < count; i++) {
+        histTS[i]    = dv.getUint16(offset, true); offset += 2;
+        histTemps[i] = dv.getInt16(offset, true) / 10.0; offset += 2;
+        histSPs[i]   = dv.getInt16(offset, true); offset += 2;
+      }
+
+      if (graphMode === "hist") drawChart();
+      scheduleHistory(30000);
     })
-    .catch(() => { historyPending = false; scheduleHistory(30000); });
+    .catch(() => { 
+      historyPending = false; 
+      scheduleHistory(30000); 
+    });
 }
 
 // --- INITIALIZATION ---
+initI18n();
 window.addEventListener("resize", drawChart);
 scheduleStatus(1000);
 scheduleHistory(1000); 
@@ -682,7 +749,7 @@ fetch("/getcustom")
       document.getElementById("stepList").innerHTML = "";
       for (var i = 0; i < d.steps.length; i++) {
         var s = d.steps[i];
-        addCustomStep(String(s.label || "Шаг").slice(0,23), validateNumber(s.temp, 0, 280, 100), validateNumber(s.hold, 1, 600, 10));
+        addCustomStep(String(s.label || LANG.step_def).slice(0,23), validateNumber(s.temp, 0, 280, 100), validateNumber(s.hold, 1, 600, 10));
       }
     }
   }).catch(() => {});

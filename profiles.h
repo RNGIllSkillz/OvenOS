@@ -1,20 +1,21 @@
 #pragma once
 #include "types.h"
 #include "state.h"
+#include "language.h"
 #include <ArduinoJson.h>
 #include <LittleFS.h>
 
 const Profile BUILTIN_PROFILES[] = {
-  { "Пайка оплавлением", 4, { {150,2, "Преднагрев"}, {180,2, "Выдержка"}, {245,1, "Оплавление"}, {30,5, "Охлаждение"} } },
-  { "Отжиг ABS", 2, { {170,30, "Отжиг"}, {30,15, "Охлаждение"} } },
-  { "PLA / TPU / PVA", 2, { {50,360, "Сушка"}, {30,30, "Охлаждение"} } },
-  { "PETG / PET +CF/GF", 2, { {65,360, "Сушка"}, {30,30, "Охлаждение"} } },
-  { "ABS / ASA +CF/GF", 2, { {80,360, "Сушка"}, {30,30, "Охлаждение"} } },
-  { "PA / Nylon +CF/GF", 3, { {70,120, "Пред. сушка"}, {85,360, "Сушка"}, {30,60, "Охлаждение"} } },
-  { "PC / PC-ABS", 2, { {85,360, "Сушка"}, {30,45, "Охлаждение"} } },
-  { "PP +CF/GF", 2, { {60,240, "Сушка"}, {30,30, "Охлаждение"} } },
-  { "PPS +CF/GF", 2, { {130,240, "Сушка"}, {30,60, "Охлаждение"} } },
-  { "PEEK +CF/GF", 2, { {150,240, "Сушка"}, {30,60, "Охлаждение"} } },
+  { L_PROF_SOLDER, 4, { {150,2, L_STEP_PREHEAT}, {180,2, L_STEP_SOAK}, {245,1, L_STEP_REFLOW}, {30,5, L_STEP_COOL} } },
+  { L_PROF_ANNEAL, 2, { {170,30, L_STEP_ANNEAL}, {30,15, L_STEP_COOL} } },
+  { L_PROF_PLA,    2, { {50,360, L_STEP_DRY}, {30,30, L_STEP_COOL} } },
+  { L_PROF_PETG,   2, { {65,360, L_STEP_DRY}, {30,30, L_STEP_COOL} } },
+  { L_PROF_ABS,    2, { {80,360, L_STEP_DRY}, {30,30, L_STEP_COOL} } },
+  { L_PROF_PA,     3, { {70,120, L_STEP_PREDRY}, {85,360, L_STEP_DRY}, {30,60, L_STEP_COOL} } },
+  { L_PROF_PC,     2, { {85,360, L_STEP_DRY}, {30,45, L_STEP_COOL} } },
+  { L_PROF_PP,     2, { {60,240, L_STEP_DRY}, {30,30, L_STEP_COOL} } },
+  { L_PROF_PPS,    2, { {130,240, L_STEP_DRY}, {30,60, L_STEP_COOL} } },
+  { L_PROF_PEEK,   2, { {150,240, L_STEP_DRY}, {30,60, L_STEP_COOL} } },
 };
 const int NUM_BUILTIN = sizeof(BUILTIN_PROFILES) / sizeof(BUILTIN_PROFILES[0]);
 
@@ -52,7 +53,7 @@ void loadCustomProfile() {
   
   DynamicJsonDocument doc(2048);
   if(!deserializeJson(doc, f)) {
-     sanitizeStr(customName, doc["name"] | "Custom", sizeof(customName));
+     sanitizeStr(customName, doc["name"] | L_DEFAULT_CUSTOM, sizeof(customName));
      customProfile.name = customName;
      JsonArray steps = doc["steps"];
      int c=0;
@@ -60,7 +61,7 @@ void loadCustomProfile() {
        if(c>=8) break;
        customProfile.steps[c].targetTemp = s["temp"];
        customProfile.steps[c].holdMin = s["hold"];
-       sanitizeStr(customProfile.steps[c].label, s["label"] | "Шаг", 23);
+       sanitizeStr(customProfile.steps[c].label, s["label"] | L_DEFAULT_STEP, 23);
        c++;
      }
      customProfile.numSteps = c;

@@ -10,7 +10,6 @@ extern MAX6675 thermocouple;
 extern PID myPID;
 extern AsyncWebServer server; 
 extern portMUX_TYPE ssrmux;
-
 extern SemaphoreHandle_t dataMutex;
 
 // PID Variables
@@ -53,6 +52,7 @@ extern int tcFailCount;
 // History State
 extern HistoryBuffer history;
 extern uint32_t lastHistCapture;
+extern volatile bool forceHistoryCapture;
 
 // Helper Prototypes
 void emergencyStop(const char* reason);

@@ -1,5 +1,5 @@
 // ============================================================
-//  CGF PID Oven Controller — OvenOS v3.0
+//  IllOvenOS v3.0
 // ============================================================
 #include <WiFi.h>
 #include <esp_task_wdt.h>
@@ -13,6 +13,7 @@
 #include "hardware.h"
 #include "settings.h"
 #include "api.h"
+#include "language.h"
 
 // --- Global Variable Definitions ---
 // Initial placeholder values; loadSettings() overrides these at boot.
@@ -36,10 +37,11 @@ volatile bool finished = false;
 volatile bool emergencyStopped = false;
 volatile bool monitoring = false;
 volatile bool tcVerifyPending = false;
+volatile bool forceHistoryCapture = false;
 
 bool profMode = false;
 int profStep = -1;
-char statusMsg[64] = "Ожидание";
+char statusMsg[64] = L_STATE_WAIT;
 
 const Profile* activeProfilePtr = nullptr;
 Profile customProfile = { "Custom", 0, {} };
@@ -69,7 +71,7 @@ SemaphoreHandle_t dataMutex;
 void setup() {
     Serial.begin(115200);
     delay(100);
-    Serial.println("\n[INIT] OvenOS v3.0");
+    Serial.println("\n[INIT] IllOvenOS v3.0");
 
     dataMutex = xSemaphoreCreateMutex();
     configASSERT(dataMutex); 
@@ -161,6 +163,14 @@ void loop() {
         lastControl = now;
         updateThermocouple();
         runControlLoop();
+    }
+    uint32_t wElapsed = now - windowStartTime;
+    while (wElapsed >= PID_WINDOW_SIZE) { windowStartTime += PID_WINDOW_SIZE; wElapsed -= PID_WINDOW_SIZE; }
+
+    if (running && tcFailCount == 0 && !emergencyStopped && !tcVerifyPending) {
+        digitalWrite(PIN_SSR, (Output > wElapsed));
+    } else {
+        digitalWrite(PIN_SSR, LOW);
     }
 
     delay(1); 

@@ -2,6 +2,7 @@
 #include <ESPAsyncWebServer.h>
 #include <AsyncJson.h>
 #include <ArduinoJson.h>
+#include "language.h"
 #include "state.h"
 #include "profiles.h"
 #include "webpage.h"
@@ -21,6 +22,10 @@ void registerAPI() {
     server.on("/script.js", HTTP_GET,[](AsyncWebServerRequest *request){
         if (!request->authenticate(WEB_USER, WEB_PASS)) return request->requestAuthentication();
         request->send_P(200, "application/javascript", PAGE_JS);
+    });
+
+    server.on("/lang.js", HTTP_GET,[](AsyncWebServerRequest *request){
+        request->send_P(200, "application/javascript", WEB_LANG_JS);
     });
 
     server.on("/favicon.ico", HTTP_GET,[](AsyncWebServerRequest *request){
@@ -94,45 +99,36 @@ void registerAPI() {
         if (!request->authenticate(WEB_USER, WEB_PASS)) return request->requestAuthentication();
         
         HistoryBuffer* snap = new (std::nothrow) HistoryBuffer();
-        if (!snap) {
-            request->send(500, "text/plain", "OOM");
-            return;
-        }
+        if (!snap) { request->send(500, "text/plain", "OOM"); return; }
 
         if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(20)) == pdTRUE) {
             *snap = history; 
             xSemaphoreGive(dataMutex);
         } 
 
-        AsyncResponseStream *response = request->beginResponseStream("application/json");
-        response->print("{\"ts\":[");
-        
         int cnt = snap->count;
+        if (cnt == 0) {
+            request->send(200, "application/octet-stream", (uint8_t*)nullptr, 0);
+            delete snap;
+            return;
+        }
+
+        AsyncResponseStream *response = request->beginResponseStream("application/octet-stream");
+        
+        // Write Header (2 bytes)
+        uint16_t n = (uint16_t)cnt;
+        response->write((uint8_t*)&n, 2);
+
+        // Write points (6 bytes per point)
         int base = (snap->head - cnt + HIST_SIZE) % HIST_SIZE;
-
         for (int i = 0; i < cnt; i++) {
             int idx = (base + i) % HIST_SIZE;
-            response->printf("%u", snap->timestamps[idx]);
-            if (i < cnt - 1) response->print(",");
-        }
-
-        response->print("],\"temps\":[");
-        for (int i = 0; i < cnt; i++) {
-            int idx = (base + i) % HIST_SIZE;
-            response->printf("%.1f", snap->temps[idx]);
-            if (i < cnt - 1) response->print(",");
-        }
-
-        response->print("],\"sps\":[");
-        for (int i = 0; i < cnt; i++) {
-            int idx = (base + i) % HIST_SIZE;
-            response->printf("%.0f", snap->sps[idx]);
-            if (i < cnt - 1) response->print(",");
+            response->write((uint8_t*)&snap->ts_offsets[idx], 2);
+            response->write((uint8_t*)&snap->temps[idx], 2);
+            response->write((uint8_t*)&snap->sps[idx], 2);
         }
         
-        response->print("]}");
         request->send(response);
-        
         delete snap;
     });
 
@@ -175,10 +171,10 @@ void registerAPI() {
             Setpoint = request->arg("temp").toDouble();
             holdMin = request->arg("time").toInt();
             running = true;
-            myPID.SetMode(AUTOMATIC);
             
             if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
-                strncpy(statusMsg, "НАГРЕВ...", sizeof(statusMsg)-1);
+                strncpy(statusMsg, L_STATE_HEATING, sizeof(statusMsg)-1);
+                myPID.SetMode(AUTOMATIC);
                 xSemaphoreGive(dataMutex);
             }
             request->send(200, "text/plain", "OK");
@@ -190,6 +186,10 @@ void registerAPI() {
     server.on("/stop", HTTP_POST,[](AsyncWebServerRequest *request){
         if (!request->authenticate(WEB_USER, WEB_PASS)) return request->requestAuthentication();
         stopReflow();
+        if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(50)) == pdTRUE) {
+            myPID.SetMode(MANUAL);
+            xSemaphoreGive(dataMutex);
+        }
         request->send(200, "text/plain", "OK");
     });
 
@@ -209,7 +209,7 @@ void registerAPI() {
         ssrDeadmanKick = millis();
         
         if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
-            strncpy(statusMsg, "ОЖИДАНИЕ", sizeof(statusMsg)-1);
+            strncpy(statusMsg, L_STATE_WAIT, sizeof(statusMsg)-1);
             xSemaphoreGive(dataMutex);
         }
         request->send(200, "text/plain", "OK");
@@ -218,25 +218,28 @@ void registerAPI() {
     server.on("/profiles", HTTP_GET,[](AsyncWebServerRequest *request){
         if (!request->authenticate(WEB_USER, WEB_PASS)) return request->requestAuthentication();
         
-        AsyncResponseStream *response = request->beginResponseStream("application/json");
-        response->print("[");
+        String json;
+        json.reserve(2048);
+        json = "[";
         
+        char buf[128];
         for (int i = 0; i < NUM_BUILTIN; i++) {
             const Profile& p = BUILTIN_PROFILES[i];
-            response->print("{\"name\":\"");
-            response->print(p.name);
-            response->print("\",\"steps\":[");
+            json += "{\"name\":\"";
+            json += p.name;
+            json += "\",\"steps\":[";
             for (int j = 0; j < p.numSteps; j++) {
                 const ProfileStep& s = p.steps[j];
-                response->printf("{\"l\":\"%s\",\"t\":%.0f,\"h\":%lu}", s.label, s.targetTemp, s.holdMin);
-                if (j < p.numSteps - 1) response->print(",");
+                snprintf(buf, sizeof(buf), "{\"l\":\"%s\",\"t\":%.0f,\"h\":%lu}", s.label, s.targetTemp, s.holdMin);
+                json += buf;
+                if (j < p.numSteps - 1) json += ',';
             }
-            response->print("]}");
-            if (i < NUM_BUILTIN - 1) response->print(",");
+            json += "]}";
+            if (i < NUM_BUILTIN - 1) json += ',';
         }
         
-        response->print("]");
-        request->send(response);
+        json += "]";
+        request->send(200, "application/json", json);
     });
 
     server.on("/getcustom", HTTP_GET,[](AsyncWebServerRequest *request){
@@ -251,6 +254,11 @@ void registerAPI() {
 
     AsyncCallbackJsonWebHandler* customHandler = new AsyncCallbackJsonWebHandler("/setcustom",[](AsyncWebServerRequest *request, JsonVariant &json) {
         if (!request->authenticate(WEB_USER, WEB_PASS)) return request->requestAuthentication();
+
+        if (running && activeProfilePtr == &customProfile) {
+            request->send(409, "text/plain", "Cannot edit running profile");
+            return;
+        }
 
         JsonObject doc = json.as<JsonObject>();
         if (doc.isNull()) { request->send(400, "text/plain", "Invalid JSON"); return; }
@@ -271,7 +279,7 @@ void registerAPI() {
             if (temp < 0 || temp > 280 || hold < 1 || hold > 600) { request->send(400, "text/plain", "Out of Bounds"); return; }
             tempSteps[count].targetTemp = temp;
             tempSteps[count].holdMin = hold;
-            sanitizeStr(tempSteps[count].label, s["label"] | "Step", 23);
+            sanitizeStr(tempSteps[count].label, s["label"] | L_DEFAULT_STEP, 23);
             count++;
         }
 
@@ -285,7 +293,7 @@ void registerAPI() {
         request->send(200, "text/plain", "OK");
     }); 
     
-    customHandler->setMaxContentLength(2048);
+    customHandler->setMaxContentLength(2048); 
     server.addHandler(customHandler);
 
     server.on("/setpid", HTTP_POST,[](AsyncWebServerRequest *request){
@@ -295,7 +303,10 @@ void registerAPI() {
         if (request->hasArg("ki")) PID_KI = request->arg("ki").toDouble();
         if (request->hasArg("kd")) PID_KD = request->arg("kd").toDouble();
         
-        myPID.SetTunings(PID_KP, PID_KI, PID_KD);
+        if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(50)) == pdTRUE) {
+            myPID.SetTunings(PID_KP, PID_KI, PID_KD);
+            xSemaphoreGive(dataMutex);
+        }
         saveSettings(); 
         
         request->send(200, "text/plain", "OK");
@@ -321,6 +332,7 @@ void registerAPI() {
             }
             runStart = millis(); 
             lastHistCapture = millis();
+            forceHistoryCapture = true;
         }
 
         request->send(200, "text/plain", "OK");

@@ -1,4 +1,5 @@
 #pragma once
+#include "language.h"
 #include "state.h"
 #include "config.h"
 
@@ -13,17 +14,16 @@ const uint32_t RUNAWAY_TIMEOUT_MS = 180000;
 // Runaway detection baseline
 double runawayBaselineTemp = 0;
 
-void IRAM_ATTR onDeadmanTimer(void* arg) {
+void onDeadmanTimer(void* arg) {
     if ((millis() - ssrDeadmanKick) > SSR_DEADMAN_MS) {
-        portENTER_CRITICAL_ISR(&ssrmux); 
+        portENTER_CRITICAL(&ssrmux);
         digitalWrite(PIN_SSR, LOW);
         emergencyStopped = true; 
-        portEXIT_CRITICAL_ISR(&ssrmux);
+        portEXIT_CRITICAL(&ssrmux);
     }
 }
 
 void emergencyStop(const char* reason) {
-    // NOTE: emergencyStop must NEVER be called from inside another portENTER_CRITICAL(&ssrmux) block to avoid deadlock.
     portENTER_CRITICAL(&ssrmux);
     digitalWrite(PIN_SSR, LOW);
     emergencyStopped = true;
@@ -41,7 +41,7 @@ void emergencyStop(const char* reason) {
     myPID.SetMode(MANUAL);
     
     if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
-        snprintf(statusMsg, sizeof(statusMsg), "АВАРИЯ: %s", reason);
+        snprintf(statusMsg, sizeof(statusMsg), "%s%s", L_ERR_PREFIX, reason);
         xSemaphoreGive(dataMutex);
     }
     Serial.printf("!!! EMERGENCY STOP: %s !!!\n", reason);
@@ -62,7 +62,7 @@ void stopReflow() {
     myPID.SetMode(MANUAL);
     
     if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
-        strncpy(statusMsg, "ОСТАНОВЛЕНО", sizeof(statusMsg) - 1);
+        strncpy(statusMsg, L_STATE_STOPPED, sizeof(statusMsg) - 1);
         statusMsg[sizeof(statusMsg) - 1] = '\0';
         xSemaphoreGive(dataMutex);
     }
@@ -71,7 +71,7 @@ void stopReflow() {
 
 void beginStep(int step) {
     if (!activeProfilePtr || step < 0 || step >= activeProfilePtr->numSteps) {
-        emergencyStop("НЕВЕРНЫЙ ШАГ");
+        emergencyStop(L_ERR_INVALID_STEP);
         return;
     }
     const ProfileStep& s = activeProfilePtr->steps[step];
@@ -119,7 +119,6 @@ void resetRunState() {
     stepStartTemp = 0;
     runawayBaselineTemp = 0; 
     
-    // NEVER clear emergencyStopped here. It should only be cleared by a manual API reset action.
     digitalWrite(PIN_SSR, LOW);
     
     myPID.SetMode(MANUAL);
@@ -164,7 +163,7 @@ void updateThermocouple() {
     if (!isValidTCReading(v)) {
         tcFailCount++;
         if (tcFailCount >= TC_FAIL_LIMIT) {
-            if (running) emergencyStop("ТЕРМОПАРА");
+            if (running) emergencyStop(L_ERR_TC_FAIL);
             else {
                  Input = 0; 
                  tcFailCount = 0; 
@@ -188,7 +187,15 @@ void updateThermocouple() {
 void runControlLoop() {
     uint32_t now = millis();
     
-    if (Input > SAFETY_MAX_TEMP) { emergencyStop("MAX TEMP LIMIT"); return; }
+    if (Input > SAFETY_MAX_TEMP) { 
+        emergencyStop(L_ERR_MAX_TEMP); 
+        return; 
+    }
+
+    if (tcVerifyPending) {
+        digitalWrite(PIN_SSR, LOW);
+        return; 
+    }
 
     bool estopFlag = false;
     portENTER_CRITICAL(&ssrmux);
@@ -198,8 +205,11 @@ void runControlLoop() {
     if (estopFlag) { 
         digitalWrite(PIN_SSR, LOW); 
         if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
-             // UTF-8: "АВАРИЯ" = 12 bytes
-             if (strncmp(statusMsg, "АВАРИЯ", 12) != 0) strncpy(statusMsg, "АВАРИЯ: СБОЙ", 63);
+             // Checking exact prefix using strlen safely independent of actual language
+             if (strncmp(statusMsg, L_ERR_PREFIX, strlen(L_ERR_PREFIX)) != 0) {
+                 snprintf(statusMsg, sizeof(statusMsg), "%s%s", L_ERR_PREFIX, L_ERR_FAULT);
+                 forceHistoryCapture = true;
+             }
              xSemaphoreGive(dataMutex);
         }
         return; 
@@ -209,49 +219,69 @@ void runControlLoop() {
         double maxExpected = (Setpoint > stepStartTemp) ? Setpoint : stepStartTemp;
         
         if (Input > (maxExpected + 20.0) && maxExpected > 40) {
-            emergencyStop("ПЕРЕГРЕВ (>SP+20)");
+            emergencyStop(L_ERR_OVERSHOOT);
             return;
         }
-
+    
         if (!timerActive) {
             if (Setpoint >= stepStartTemp) {
                 if (Input > currentStepPeak) currentStepPeak = Input;
                 
                 if (Input < Setpoint && currentStepPeak > 40 && Input < (currentStepPeak - 15.0)) {
-                    emergencyStop("ПАДЕНИЕ ТЕМП."); 
+                    emergencyStop(L_ERR_DROP); 
                     return;
                 }
             }
         }
     }
 
-    if ((running || monitoring || Input > 25.0) && (now - lastHistCapture >= HIST_INTERVAL)) {
+    bool shouldCapture = false;
+    if (forceHistoryCapture) {
+        shouldCapture = true;
+        forceHistoryCapture = false;
+    } else if ((running || monitoring || Input > 25.0) && (now - lastHistCapture >= HIST_INTERVAL)) {
+        shouldCapture = true;
+    }
+    if (shouldCapture) {
         if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
             int idx = history.head;
-            history.temps[idx] = Input;
-            history.sps[idx] = Setpoint;
-            history.timestamps[idx] = (now - runStart)/1000;
+            history.temps[idx] = (int16_t)round(Input * 10.0);
+            history.sps[idx] = (int16_t)round(Setpoint);
+            
+            // Calculate relative seconds. Max out at 65535 (18.2 hours) to fit in uint16_t
+            uint32_t elapsed = (now >= runStart) ? (now - runStart) / 1000 : 0;
+            if (elapsed > 65535) elapsed = 65535;
+            history.ts_offsets[idx] = (uint16_t)elapsed;
+            
             history.head = (idx + 1) % HIST_SIZE;
             if (history.count < HIST_SIZE) history.count++;
             xSemaphoreGive(dataMutex);
         }
-        lastHistCapture = now;
+        lastHistCapture = now; // Reset timer so the next interval starts counting from NOW
     }
 
-    if (!running || finished || tcVerifyPending) { 
+    if (!running || finished) { 
         digitalWrite(PIN_SSR, LOW); 
         fullPowerStartTime = 0;
-        if(myPID.GetMode() != MANUAL) myPID.SetMode(MANUAL);
+        if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+            if(myPID.GetMode() != MANUAL) myPID.SetMode(MANUAL);
+            xSemaphoreGive(dataMutex);
+        }
         return; 
     }
 
     if (!timerActive) {
         if (heatStartTime == 0) heatStartTime = now;
-        if (now - heatStartTime > HEAT_TIMEOUT_MS) { emergencyStop("ТАЙМАУТ"); return; }
+        if (now - heatStartTime > HEAT_TIMEOUT_MS) { emergencyStop(L_ERR_TIMEOUT); return; }
     }
 
     if(myPID.GetMode() != AUTOMATIC) myPID.SetMode(AUTOMATIC);
-    myPID.Compute();
+
+    if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+        if(myPID.GetMode() != AUTOMATIC) myPID.SetMode(AUTOMATIC);
+        myPID.Compute();
+        xSemaphoreGive(dataMutex);
+    }
     
     uint32_t wElapsed = now - windowStartTime;
     while (wElapsed >= (uint32_t)PID_WINDOW_SIZE) { 
@@ -270,7 +300,7 @@ void runControlLoop() {
         else if (now - fullPowerStartTime > RUNAWAY_TIMEOUT_MS) {
             if (Input < (Setpoint - 10)) {
                 if ((Input - runawayBaselineTemp) < 5.0) {
-                     emergencyStop("ТЕПЛОВОЙ РАЗГОН");
+                     emergencyStop(L_ERR_RUNAWAY);
                      return;
                 } else {
                      runawayBaselineTemp = Input;
@@ -278,17 +308,26 @@ void runControlLoop() {
                 }
             }
         }
-    } else if (Output < PID_WINDOW_SIZE * 0.5) {
+    } else if (Output < PID_WINDOW_SIZE * 0.85) {
         fullPowerStartTime = 0;
     }
 
     double err = fabs(Input - Setpoint);
+    bool isStable = false;
+
+    if (Setpoint < 50.0 && stepStartTemp > Setpoint) {
+        isStable = (Input <= Setpoint + 5.0);
+    } else {
+        isStable = (err <= STABLE_TOLERANCE);
+    }
+
     if (!timerActive) {
-        if (err <= STABLE_TOLERANCE) {
+        if (isStable) {
             if (stabStart == 0) { 
                 stabStart = now; 
                 if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
-                    strncpy(statusMsg, "СТАБИЛИЗАЦИЯ", 63); 
+                    strncpy(statusMsg, L_STATE_STABLE, 63);
+                    forceHistoryCapture = true;
                     xSemaphoreGive(dataMutex);
                 }
             }
@@ -298,7 +337,8 @@ void runControlLoop() {
                 heatStartTime = 0;
                 currentStepPeak = Input; 
                 if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
-                    strncpy(statusMsg, "ПОДДЕРЖКА", 63);
+                    strncpy(statusMsg, L_STATE_HOLD, 63);
+                    forceHistoryCapture = true;
                     xSemaphoreGive(dataMutex);
                 }
             }
@@ -313,7 +353,8 @@ void runControlLoop() {
                     running = false; finished = true; profMode = false; 
                     digitalWrite(PIN_SSR, LOW); 
                     if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
-                        strncpy(statusMsg, "ГОТОВО", 63);
+                        strncpy(statusMsg, L_STATE_DONE, 63);
+                        forceHistoryCapture = true;
                         xSemaphoreGive(dataMutex);
                     }
                 }
@@ -321,7 +362,8 @@ void runControlLoop() {
                 running = false; finished = true; 
                 digitalWrite(PIN_SSR, LOW); 
                 if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
-                    strncpy(statusMsg, "КОНЕЦ", 63);
+                    strncpy(statusMsg, L_STATE_END, 63);
+                    forceHistoryCapture = true;
                     xSemaphoreGive(dataMutex);
                 }
             }
