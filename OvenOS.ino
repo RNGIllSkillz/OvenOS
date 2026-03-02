@@ -2,6 +2,7 @@
 //  IllOvenOS v3.0
 // ============================================================
 #include <WiFi.h>
+#include <esp_wifi.h>
 #include <esp_task_wdt.h>
 #include <esp_timer.h>
 #include <ESPAsyncWebServer.h>
@@ -16,7 +17,6 @@
 #include "language.h"
 
 // --- Global Variable Definitions ---
-// Initial placeholder values; loadSettings() overrides these at boot.
 double PID_KP = 80.0;
 double PID_KI = 0.4;
 double PID_KD = 1.5;
@@ -24,8 +24,6 @@ double PID_KD = 1.5;
 MAX6675 thermocouple(PIN_TC_CLK, PIN_TC_CS, PIN_TC_DO);
 double Setpoint = 0, Input = 25, Output = 0;
 
-// Initialize PID with defaults. NOTE: Any future function modifying global PID constants 
-// (e.g., loadSettings) MUST explicitly call myPID.SetTunings() to sync this hardware object.
 PID myPID(&Input, &Output, &Setpoint, PID_KP, PID_KI, PID_KD, DIRECT);
 
 AsyncWebServer server(80); 
@@ -66,7 +64,6 @@ uint32_t windowStartTime = 0;
 double currentStepPeak = 0.0;
 double stepStartTemp = 0.0;
 
-// Mutex Definition
 SemaphoreHandle_t dataMutex;
 
 void setup() {
@@ -88,10 +85,12 @@ void setup() {
     }
 
     // --- WIFI SETUP WITH AP FALLBACK ---
-    WiFi.mode(WIFI_STA);
-    WiFi.setSleep(false);
+    WiFi.mode(WIFI_STA);    
+    WiFi.setAutoReconnect(true); 
+    
     WiFi.setTxPower(WIFI_POWER_19_5dBm);
-    WiFi.begin(WIFI_SSID, WIFI_PASS);
+    WiFi.begin(WIFI_SSID, WIFI_PASS);    
+    esp_wifi_set_ps(WIFI_PS_NONE); 
     
     uint32_t wifiStart = millis();
     Serial.println("Connecting to WiFi...");
@@ -106,6 +105,7 @@ void setup() {
         Serial.println("[WIFI] Connection failed. Starting AP Mode.");
         WiFi.mode(WIFI_AP);
         WiFi.softAP(WIFI_AP_SSID, WIFI_AP_PASS); 
+        esp_wifi_set_ps(WIFI_PS_NONE);
         Serial.print("[INIT] AP IP: "); Serial.println(WiFi.softAPIP());
     }
 
@@ -140,7 +140,6 @@ void loop() {
     uint32_t now = millis();
     esp_task_wdt_reset();
     
-    // Strict RTOS safety: read the volatile flag inside the spinlock
     bool estopFlag;
     portENTER_CRITICAL(&ssrmux);
     estopFlag = emergencyStopped;
@@ -148,15 +147,6 @@ void loop() {
 
     if (!estopFlag) {
         ssrDeadmanKick = now;
-    }
-    
-    static uint32_t lastWifiCheck = 0;
-    if (WiFi.getMode() == WIFI_STA && (now - lastWifiCheck > 30000)) {
-        lastWifiCheck = now;
-        if (WiFi.status() != WL_CONNECTED) {
-            Serial.println("[WIFI] Connection lost. Reconnecting...");
-            WiFi.reconnect(); 
-        }
     }
     
     static uint32_t lastControl = 0;
@@ -172,10 +162,16 @@ void loop() {
         wElapsed -= PID_WINDOW_SIZE; 
     }
 
-    // Single source of truth for the SSR
-    bool safeToFire = running && !finished && !emergencyStopped 
-                   && !tcVerifyPending && (tcFailCount < TC_FAIL_LIMIT);                   
-    digitalWrite(PIN_SSR, safeToFire && (Output > wElapsed));
-
+    bool safeToFire = false;
+    double snapOutput = 0.0;
+    
+    if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(50)) == pdTRUE) {
+        safeToFire = running && !finished && !emergencyStopped 
+                   && !tcVerifyPending && (tcFailCount < TC_FAIL_LIMIT);  
+        snapOutput = Output;
+        xSemaphoreGive(dataMutex);
+    }
+    digitalWrite(PIN_SSR, safeToFire && (snapOutput > wElapsed));
+    
     delay(1); 
 }

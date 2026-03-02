@@ -59,8 +59,9 @@ void loadCustomProfile() {
      int c=0;
      for(JsonObject s : steps) {
        if(c>=8) break;
-       customProfile.steps[c].targetTemp = s["temp"];
-       customProfile.steps[c].holdMin = s["hold"];
+       // Ensuring strict type alignment
+       customProfile.steps[c].targetTemp = s["temp"].as<double>();
+       customProfile.steps[c].holdMin = s["hold"].as<unsigned long>();
        sanitizeStr(customProfile.steps[c].label, s["label"] | L_DEFAULT_STEP, 23);
        c++;
      }

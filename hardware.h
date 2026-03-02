@@ -29,18 +29,18 @@ void emergencyStop(const char* reason) {
     emergencyStopped = true;
     portEXIT_CRITICAL(&ssrmux);
     
-    running = false;
-    timerActive = false;
-    finished = false;
-    profMode = false;
-    activeProfilePtr = nullptr;
-    profStep = -1;
-    Output = 0;
-    
-    tcVerifyPending = false;
-    myPID.SetMode(MANUAL);
-    
-    if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+    if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(200)) == pdTRUE) {
+        running = false;
+        timerActive = false;
+        finished = false;
+        profMode = false;
+        activeProfilePtr = nullptr;
+        profStep = -1;
+        Output = 0;
+        
+        tcVerifyPending = false;
+        myPID.SetMode(MANUAL);
+        
         snprintf(statusMsg, sizeof(statusMsg), "%s%s", L_ERR_PREFIX, reason);
         xSemaphoreGive(dataMutex);
     }
@@ -49,21 +49,22 @@ void emergencyStop(const char* reason) {
 
 void stopReflow() {
     digitalWrite(PIN_SSR, LOW);
-    running = false;
-    timerActive = false;
-    finished = false;
-    profMode = false;
-    activeProfilePtr = nullptr;
-    profStep = -1;
-    Output = 0;
     
-    tcFailCount = 0; 
-    tcVerifyPending = false;
-    myPID.SetMode(MANUAL);
-    runawayBaselineTemp = 0;
-    fullPowerStartTime = 0;
-    
-    if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+    if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(200)) == pdTRUE) {
+        running = false;
+        timerActive = false;
+        finished = false;
+        profMode = false;
+        activeProfilePtr = nullptr;
+        profStep = -1;
+        Output = 0;
+        
+        tcFailCount = 0; 
+        tcVerifyPending = false;
+        myPID.SetMode(MANUAL);
+        runawayBaselineTemp = 0;
+        fullPowerStartTime = 0;
+        
         strncpy(statusMsg, L_STATE_STOPPED, sizeof(statusMsg) - 1);
         statusMsg[sizeof(statusMsg) - 1] = '\0';
         xSemaphoreGive(dataMutex);
@@ -78,67 +79,62 @@ void beginStep(int step) {
     }
     const ProfileStep& s = activeProfilePtr->steps[step];
     
-    // Lock the 64-bit writes to prevent torn reads
-    if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+    if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(200)) == pdTRUE) {
         Setpoint = s.targetTemp;
         holdMin = s.holdMin;
         strncpy(statusMsg, s.label, sizeof(statusMsg) - 1);
         statusMsg[sizeof(statusMsg) - 1] = '\0';
-        xSemaphoreGive(dataMutex);
-    } else {
-        // Fallback if heavily congested
-        Setpoint = s.targetTemp;
-        holdMin = s.holdMin;
-    }
-
-    timerActive = false;
-    stabStart = 0;
-    procStart = 0;
-    heatStartTime = 0;
-    finished = false;
-    currentStepPeak = Input; 
-    stepStartTemp = Input; 
-    
-    if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
-        strncpy(statusMsg, s.label, sizeof(statusMsg) - 1);
-        statusMsg[sizeof(statusMsg) - 1] = '\0';
+        
+        timerActive = false;
+        stabStart = 0;
+        procStart = 0;
+        heatStartTime = 0;
+        finished = false;
+        currentStepPeak = Input; 
+        stepStartTemp = Input; 
+        profStep = step;
+        
+        running = true;
+        myPID.SetMode(AUTOMATIC);
         xSemaphoreGive(dataMutex);
     }
 }
 
 void resetRunState() {    
-    running = false;
-    monitoring = false; 
-    timerActive = false;
-    finished = false;
-    profStep = -1;
-    activeProfilePtr = nullptr;
-    
-    if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+    digitalWrite(PIN_SSR, LOW);
+
+    if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(200)) == pdTRUE) {
+        running = false;
+        monitoring = false; 
+        timerActive = false;
+        finished = false;
+        profStep = -1;
+        activeProfilePtr = nullptr;
+        
         history.head = 0;
         history.count = 0;
+        
+        heatStartTime = 0;
+        tcFailCount = 0;
+        tcVerifyPending = false;
+        stabStart = 0;
+        Output = 0;
+        fullPowerStartTime = 0; 
+        
+        currentStepPeak = 0; 
+        stepStartTemp = 0;
+        runawayBaselineTemp = 0; 
+        tcFirstRead = true;
+        
+        myPID.SetMode(MANUAL);
+        myPID.SetOutputLimits(0, PID_WINDOW_SIZE);
+
         xSemaphoreGive(dataMutex);
     }
     
     runStart = millis();
     lastHistCapture = runStart;
-    heatStartTime = 0;
-    tcFailCount = 0;
-    tcVerifyPending = false;
-    stabStart = 0;
-    Output = 0;
-    fullPowerStartTime = 0; 
-    
-    currentStepPeak = 0; 
-    stepStartTemp = 0;
-    runawayBaselineTemp = 0; 
-    
-    digitalWrite(PIN_SSR, LOW);
-    
-    myPID.SetMode(MANUAL);
-    myPID.SetOutputLimits(0, PID_WINDOW_SIZE);
     windowStartTime = millis();
-    tcFirstRead = true;
 }
 
 bool isValidTCReading(double temp) {
@@ -155,7 +151,7 @@ void updateThermocouple() {
     lastRead = now;
 
     if (tcVerifyPending) {
-        if (now - tcVerifyStartTime < 20) return;
+        if (now - tcVerifyStartTime < 250) return; 
         
         double v2 = thermocouple.readCelsius();
         tcVerifyPending = false;
@@ -166,9 +162,12 @@ void updateThermocouple() {
         }
         
         if (fabs(v2 - tcVerifyFirstReading) < 10.0) {
-             Input = v2;
-             lastValidTemp = v2;
-             tcFailCount = 0;
+             if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(50)) == pdTRUE) {
+                 Input = v2;
+                 lastValidTemp = v2;
+                 tcFailCount = 0;
+                 xSemaphoreGive(dataMutex);
+             }
         }
         return;
     }
@@ -180,7 +179,10 @@ void updateThermocouple() {
         if (tcFailCount >= TC_FAIL_LIMIT) {
             if (running) emergencyStop(L_ERR_TC_FAIL);
             else {
-                 Input = 0; 
+                 if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(50)) == pdTRUE) {
+                     Input = 0; 
+                     xSemaphoreGive(dataMutex);
+                 }
                  tcFailCount = 0; 
             }
         }
@@ -188,10 +190,13 @@ void updateThermocouple() {
     }
 
     if (tcFirstRead) {
-        Input = v;
-        lastValidTemp = v;
-        tcFirstRead = false;
-        tcFailCount = 0;
+        if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(50)) == pdTRUE) {
+            Input = v;
+            lastValidTemp = v;
+            tcFirstRead = false;
+            tcFailCount = 0;
+            xSemaphoreGive(dataMutex);
+        }
         return;
     }
 
@@ -202,30 +207,44 @@ void updateThermocouple() {
         return;
     }
 
-    Input = (Input * 0.7) + (v * 0.3);
-    lastValidTemp = v;
-    tcFailCount = 0;
+    if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(50)) == pdTRUE) {
+        Input = (Input * 0.7) + (v * 0.3);
+        lastValidTemp = v;
+        tcFailCount = 0;
+        xSemaphoreGive(dataMutex);
+    }
 }
 
 void runControlLoop() {
     uint32_t now = millis();
 
-    double snapSP = Setpoint;
-    unsigned long snapHold = holdMin;
-    if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(5)) == pdTRUE) {
+    double snapSP;
+    unsigned long snapHold;
+    double snapInput;
+    double snapStepStart;
+    double snapPeak;
+    bool snapTimerActive;
+    int snapProfStep;
+    
+    if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(50)) == pdTRUE) {
         snapSP = Setpoint;
         snapHold = holdMin;
+        snapInput = Input;
+        snapStepStart = stepStartTemp;
+        snapPeak = currentStepPeak;
+        snapTimerActive = timerActive;
+        snapProfStep = profStep;
         xSemaphoreGive(dataMutex);
+    } else {
+        return; 
     }
     
-    if (Input > SAFETY_MAX_TEMP) { 
+    if (snapInput > SAFETY_MAX_TEMP) { 
         emergencyStop(L_ERR_MAX_TEMP); 
         return; 
     }
 
-    if (tcVerifyPending) {
-        return; 
-    }
+    if (tcVerifyPending) return;
 
     bool estopFlag = false;
     portENTER_CRITICAL(&ssrmux);
@@ -233,8 +252,7 @@ void runControlLoop() {
     portEXIT_CRITICAL(&ssrmux);
 
     if (estopFlag) {
-        if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
-             // Checking exact prefix using strlen safely independent of actual language
+        if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(50)) == pdTRUE) {
              if (strncmp(statusMsg, L_ERR_PREFIX, strlen(L_ERR_PREFIX)) != 0) {
                  snprintf(statusMsg, sizeof(statusMsg), "%s%s", L_ERR_PREFIX, L_ERR_FAULT);
                  forceHistoryCapture = true;
@@ -245,18 +263,24 @@ void runControlLoop() {
     }
 
     if (running) {
-        double maxExpected = (snapSP > stepStartTemp) ? snapSP : stepStartTemp;
+        double maxExpected = (snapSP > snapStepStart) ? snapSP : snapStepStart;
         
-        if (Input > (maxExpected + 20.0) && maxExpected > 40) {
+        if (snapInput > (maxExpected + 20.0) && snapInput > 60.0) {
             emergencyStop(L_ERR_OVERSHOOT);
             return;
         }
     
-        if (!timerActive) {
-            if (snapSP >= stepStartTemp) {
-                if (Input > currentStepPeak) currentStepPeak = Input;
+        if (!snapTimerActive) {
+            if (snapSP >= snapStepStart) {
+                if (snapInput > snapPeak) {
+                    if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(50)) == pdTRUE) {
+                        currentStepPeak = snapInput;
+                        snapPeak = snapInput;
+                        xSemaphoreGive(dataMutex);
+                    }
+                }
                 
-                if (Input < snapSP && currentStepPeak > 40 && Input < (currentStepPeak - 15.0)) {
+                if (snapInput < snapSP && snapPeak > 40 && snapInput < (snapPeak - 15.0)) {
                     emergencyStop(L_ERR_DROP); 
                     return;
                 }
@@ -268,16 +292,16 @@ void runControlLoop() {
     if (forceHistoryCapture) {
         shouldCapture = true;
         forceHistoryCapture = false;
-    } else if ((running || monitoring || Input > 25.0) && (now - lastHistCapture >= HIST_INTERVAL)) {
+    } else if ((running || monitoring || snapInput > 25.0) && (now - lastHistCapture >= HIST_INTERVAL)) {
         shouldCapture = true;
     }
+    
     if (shouldCapture) {
-        if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+        if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(50)) == pdTRUE) {
             int idx = history.head;
             history.temps[idx] = (int16_t)round(Input * 10.0);
-            history.sps[idx] = (int16_t)round(snapSP);
+            history.sps[idx] = (int16_t)round(Setpoint);
             
-            // Calculate relative seconds. Max out at 65535 (18.2 hours) to fit in uint16_t
             uint32_t elapsed = (now >= runStart) ? (now - runStart) / 1000 : 0;
             if (elapsed > 65535) elapsed = 65535;
             history.ts_offsets[idx] = (uint16_t)elapsed;
@@ -286,24 +310,24 @@ void runControlLoop() {
             if (history.count < HIST_SIZE) history.count++;
             xSemaphoreGive(dataMutex);
         }
-        lastHistCapture = now; // Reset timer so the next interval starts counting from NOW
+        lastHistCapture = now; 
     }
 
     if (!running || finished) {
         fullPowerStartTime = 0;
-        if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+        if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(50)) == pdTRUE) {
             if(myPID.GetMode() != MANUAL) myPID.SetMode(MANUAL);
             xSemaphoreGive(dataMutex);
         }
         return; 
     }
 
-    if (!timerActive) {
+    if (!snapTimerActive) {
         if (heatStartTime == 0) heatStartTime = now;
         if (now - heatStartTime > HEAT_TIMEOUT_MS) { emergencyStop(L_ERR_TIMEOUT); return; }
     }
 
-    if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+    if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(50)) == pdTRUE) {
         if(myPID.GetMode() != AUTOMATIC) myPID.SetMode(AUTOMATIC);
         myPID.Compute();
         xSemaphoreGive(dataMutex);
@@ -312,15 +336,15 @@ void runControlLoop() {
     if (Output >= PID_WINDOW_SIZE * 0.9) { 
         if (fullPowerStartTime == 0) {
             fullPowerStartTime = now;
-            runawayBaselineTemp = Input;
+            runawayBaselineTemp = snapInput;
         }
         else if (now - fullPowerStartTime > RUNAWAY_TIMEOUT_MS) {
-            if (Input < (snapSP - 10)) {
-                if ((Input - runawayBaselineTemp) < 5.0) {
+            if (snapInput < (snapSP - 10)) {
+                if ((snapInput - runawayBaselineTemp) < 5.0) {
                      emergencyStop(L_ERR_RUNAWAY);
                      return;
                 } else {
-                     runawayBaselineTemp = Input;
+                     runawayBaselineTemp = snapInput;
                      fullPowerStartTime = now; 
                 }
             }
@@ -329,20 +353,20 @@ void runControlLoop() {
         fullPowerStartTime = 0;
     }
 
-    double err = fabs(Input - snapSP);
+    double err = fabs(snapInput - snapSP);
     bool isStable = false;
 
-    if (snapSP < 50.0 && stepStartTemp > snapSP) {
-        isStable = (Input <= snapSP + 5.0);
+    if (snapSP < 50.0 && snapStepStart > snapSP) {
+        isStable = (snapInput <= snapSP + 5.0);
     } else {
         isStable = (err <= STABLE_TOLERANCE);
     }
 
-    if (!timerActive) {
+    if (!snapTimerActive) {
         if (isStable) {
             if (stabStart == 0) { 
                 stabStart = now; 
-                if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+                if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(50)) == pdTRUE) {
                     strncpy(statusMsg, L_STATE_STABLE, sizeof(statusMsg) - 1);
                     statusMsg[sizeof(statusMsg) - 1] = '\0';
                     forceHistoryCapture = true;
@@ -350,11 +374,12 @@ void runControlLoop() {
                 }
             }
             else if (now - stabStart >= STABLE_REQUIRED_TIME) {
-                timerActive = true; 
-                procStart = now; 
-                heatStartTime = 0;
-                currentStepPeak = Input; 
-                if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+                if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(50)) == pdTRUE) {
+                    timerActive = true; 
+                    snapTimerActive = true;
+                    procStart = now; 
+                    heatStartTime = 0;
+                    currentStepPeak = snapInput; 
                     strncpy(statusMsg, L_STATE_HOLD, sizeof(statusMsg) - 1);
                     statusMsg[sizeof(statusMsg) - 1] = '\0';
                     forceHistoryCapture = true;
@@ -367,11 +392,13 @@ void runControlLoop() {
     } else {
         if ((now - procStart)/1000 >= snapHold*60) {
             if (profMode) {
-                if (++profStep < activeProfilePtr->numSteps) beginStep(profStep);
-                else {
-                    running = false; finished = true; profMode = false; 
-                    digitalWrite(PIN_SSR, LOW); 
-                    if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+                int nextStep = snapProfStep + 1;
+                if (activeProfilePtr && nextStep < activeProfilePtr->numSteps) {
+                    beginStep(nextStep);
+                } else {
+                    if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(50)) == pdTRUE) {
+                        running = false; finished = true; profMode = false; 
+                        digitalWrite(PIN_SSR, LOW); 
                         strncpy(statusMsg, L_STATE_DONE, sizeof(statusMsg) - 1);
                         statusMsg[sizeof(statusMsg) - 1] = '\0';
                         forceHistoryCapture = true;
@@ -379,9 +406,9 @@ void runControlLoop() {
                     }
                 }
             } else {
-                running = false; finished = true; 
-                digitalWrite(PIN_SSR, LOW); 
-                if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+                if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(50)) == pdTRUE) {
+                    running = false; finished = true; 
+                    digitalWrite(PIN_SSR, LOW); 
                     strncpy(statusMsg, L_STATE_END, sizeof(statusMsg) - 1);
                     statusMsg[sizeof(statusMsg) - 1] = '\0';
                     forceHistoryCapture = true;
