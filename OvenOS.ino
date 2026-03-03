@@ -85,11 +85,11 @@ void setup() {
     }
 
     // --- WIFI SETUP WITH AP FALLBACK ---
-    WiFi.mode(WIFI_STA);    
-    WiFi.setAutoReconnect(true); 
-    
+    WiFi.mode(WIFI_STA);
+    WiFi.setAutoReconnect(true);
     WiFi.setTxPower(WIFI_POWER_19_5dBm);
-    WiFi.begin(WIFI_SSID, WIFI_PASS);    
+    WiFi.begin(WIFI_SSID, WIFI_PASS);
+    
     esp_wifi_set_ps(WIFI_PS_NONE); 
     
     uint32_t wifiStart = millis();
@@ -111,7 +111,8 @@ void setup() {
 
     myPID.SetOutputLimits(0, PID_WINDOW_SIZE);
     myPID.SetMode(MANUAL);
-    myPID.SetSampleTime(250);
+    
+    myPID.SetSampleTime(PID_WINDOW_SIZE);
 
     registerAPI();
     server.begin();
@@ -150,7 +151,7 @@ void loop() {
     }
     
     static uint32_t lastControl = 0;
-    if (now - lastControl >= 250) {
+    if (now - lastControl >= PID_WINDOW_SIZE) {
         lastControl = now;
         updateThermocouple();
         runControlLoop();
@@ -171,7 +172,8 @@ void loop() {
         snapOutput = Output;
         xSemaphoreGive(dataMutex);
     }
+
     digitalWrite(PIN_SSR, safeToFire && (snapOutput > wElapsed));
-    
+
     delay(1); 
 }

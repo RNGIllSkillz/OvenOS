@@ -2,16 +2,16 @@
 #include "credentials.h"
 
 // PIN DEFINITIONS
-const int PIN_SSR     = 4;
-const int PIN_TC_DO   = 19;
-const int PIN_TC_CS   = 5;
-const int PIN_TC_CLK  = 18;
+const int PIN_SSR     = 16;
+const int PIN_TC_DO   = 4;
+const int PIN_TC_CS   = 2;
+const int PIN_TC_CLK  = 15;
 
 // PID TUNING
 extern double PID_KP;
 extern double PID_KI;
 extern double PID_KD;
-const int PID_WINDOW_SIZE = 1000;
+const int PID_WINDOW_SIZE = 250;
 
 // SAFETY SETTINGS
 const double        STABLE_TOLERANCE     = 2.0;    // Deg C
@@ -24,5 +24,5 @@ const double        MAX_RISE_PER_READ    = 10.0;
 const int           TC_FAIL_LIMIT        = 4;      
 
 // HISTORY CONFIGURATION
-const unsigned long HIST_INTERVAL        = 60000;  // 1 minute per point
-const int           HIST_SIZE            = 600;    // 10 hours of total history retention
+const unsigned long HIST_INTERVAL        = 30000;  // 30 seconds per point
+const int           HIST_SIZE            = 1200;    // 10 hours of total history retention

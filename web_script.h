@@ -647,16 +647,17 @@ function pollStatus() {
         addLog(LANG.msg_state + translatedMsg, logCls); prevMsg = rawMsg; 
       }
       
-      if (d.kp !== undefined) {
-         if (document.activeElement.id !== "pidKp") document.getElementById("pidKp").value = d.kp;
-         if (document.activeElement.id !== "pidKi") document.getElementById("pidKi").value = d.ki;
-         if (document.activeElement.id !== "pidKd") document.getElementById("pidKd").value = d.kd;
+      if (d.kp !== undefined && !isSettingsOpen) {
+         document.getElementById("pidKp").value = d.kp;
+         document.getElementById("pidKi").value = d.ki;
+         document.getElementById("pidKd").value = d.kd;
       }
       
       var elapsedDraw = Date.now() - t0;
       scheduleStatus(elapsedDraw > 800 ? 3000 : 2000);
     })
-    .catch(() => {
+    .catch((e) => {
+      console.error("Status Poll Error:", e);
       statusPending = false; failCount++;
       if (failCount > 3) { document.getElementById("badge").textContent = LANG.msg_dead; document.getElementById("badge").className = ""; }
       scheduleStatus(3000); 
@@ -731,7 +732,8 @@ function pollHistory() {
       if (graphMode === "hist") drawChart();
       scheduleHistory(30000);
     })
-    .catch(() => { 
+    .catch((e) => { 
+      console.error("History Poll Error:", e);
       historyPending = false; 
       scheduleHistory(30000); 
     });
@@ -763,7 +765,6 @@ function exportChart() {
     offCanvas.height = H;
     var ctxOff = offCanvas.getContext("2d");
 
-    // 1. Fill White Background
     ctxOff.fillStyle = "#ffffff";
     ctxOff.fillRect(0, 0, W, H);
 
@@ -771,7 +772,6 @@ function exportChart() {
     var cw = W - pad.l - pad.r;
     var ch = H - pad.t - pad.b;
 
-    // Calculate Bounds
     var allV = visTemps.concat(visSPs);
     var yMin = Math.min.apply(null, allV);
     var yMax = Math.max.apply(null, allV);
@@ -787,7 +787,6 @@ function exportChart() {
     function px(x) { return pad.l + ((x - xMin) / xRng) * cw; }
     function py(y) { return pad.t + ch - ((y - yMin) / yRng) * ch; }
 
-    // 2. Draw Favicon, Title, and Legend
     ctxOff.fillStyle = "#2c3e50";
     ctxOff.font = "bold 24px Arial, sans-serif";
     ctxOff.textAlign = "left";
@@ -796,28 +795,24 @@ function exportChart() {
     var exportTitle = (LANG && LANG.title) ? LANG.title : "ReflowOven";
     var textX = pad.l;
 
-    // Draw the icon if it loaded successfully
     if (iconImg) {
       ctxOff.drawImage(iconImg, pad.l, pad.t - 49, 24, 24);
-      textX += 34; // Shift the title text to the right to make room
+      textX += 34; 
     }
     
     ctxOff.fillText(exportTitle, textX, pad.t - 30);
 
     ctxOff.font = "16px Arial, sans-serif";
-    // Blue Temperature Legend (Shifted right to avoid long titles)
     ctxOff.fillStyle = "#3498db";
     ctxOff.fillRect(pad.l + 260, pad.t - 35, 30, 4);
     ctxOff.fillStyle = "#34495e";
     ctxOff.fillText("Temperature", pad.l + 300, pad.t - 28);
     
-    // Red Setpoint Legend
     ctxOff.fillStyle = "#e74c3c";
     ctxOff.fillRect(pad.l + 420, pad.t - 35, 30, 4);
     ctxOff.fillStyle = "#34495e";
     ctxOff.fillText("Setpoint", pad.l + 460, pad.t - 28);
 
-    // 3. Draw Grid and Axes
     ctxOff.strokeStyle = "#ecf0f1";
     ctxOff.lineWidth = 1;
     ctxOff.fillStyle = "#7f8c8d";
@@ -859,11 +854,10 @@ function exportChart() {
     ctxOff.save();
     ctxOff.translate(pad.l - 55, pad.t + ch / 2);
     ctxOff.rotate(-Math.PI / 2);
-    ctxOff.fillText("Temps (\u00B0C)", 0, 0); // Unicode degree symbol
+    ctxOff.fillText("Temps (\u00B0C)", 0, 0); 
     ctxOff.restore();
     ctxOff.fillText("Time (s)", pad.l + cw / 2, pad.t + ch + 45);
 
-    // 4. Draw Setpoint Line (Red)
     ctxOff.strokeStyle = "#e74c3c";
     ctxOff.lineWidth = 3;
     ctxOff.beginPath();
@@ -873,7 +867,6 @@ function exportChart() {
     }
     ctxOff.stroke();
 
-    // 5. Draw Temperature Line (Blue)
     ctxOff.strokeStyle = "#3498db";
     ctxOff.lineWidth = 3;
     ctxOff.lineJoin = "round";
@@ -884,7 +877,6 @@ function exportChart() {
     }
     ctxOff.stroke();
 
-    // 6. BLOB Download (Suppresses Insecure Data URI warning)
     if (offCanvas.toBlob) {
       offCanvas.toBlob(function(blob) {
         var url = URL.createObjectURL(blob);
@@ -897,11 +889,9 @@ function exportChart() {
         a.click();
         document.body.removeChild(a);
         
-        // Clean up memory
         setTimeout(function() { URL.revokeObjectURL(url); }, 200);
       }, "image/png");
     } else {
-      // Fallback for older browsers
       var dataUrl = offCanvas.toDataURL("image/png");
       var a2 = document.createElement("a");
       a2.href = dataUrl;
