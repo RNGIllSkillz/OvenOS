@@ -51,7 +51,8 @@ Navigate: Open your browser to the IP address shown in the Serial Monitor (or th
 
 🧰 Dependencies
 This project requires the following libraries:
-ESPAsyncWebServer (and AsyncTCP) by ESP32Async
-ArduinoJson
-PID_v1
-max6675
+
+1. ESPAsyncWebServer (and AsyncTCP) by ESP32Async
+2. ArduinoJson
+3. PID_v1
+4. max6675
