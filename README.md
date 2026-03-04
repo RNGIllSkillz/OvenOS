@@ -48,6 +48,7 @@ This firmware transforms a standard toaster oven or custom heating chamber into 
 Upload Filesystem: You must upload the LittleFS filesystem to the ESP32 (used for saving settings and custom profiles).
 Compile & Flash: Upload the firmware to your ESP32.
 Navigate: Open your browser to the IP address shown in the Serial Monitor (or the AP IP if your WiFi was unavailable).
+
 🧰 Dependencies
 This project requires the following libraries:
 ESPAsyncWebServer (and AsyncTCP) by ESP32Async
