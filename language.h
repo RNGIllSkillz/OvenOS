@@ -57,7 +57,7 @@
 const char WEB_LANG_JS[] PROGMEM = R"rawliteral(
 const I18N = {
   en: {
-    title: "CGF Oven",
+    title: "CGFЦЭХ",
     subtitle: "Temperature Controller",
     badge_offline: "OFFLINE",
     badge_online: "ONLINE",
@@ -139,6 +139,8 @@ const I18N = {
     lbl_min: "min",
     chart_export: "&#128247; Export",
     msg_export_err: "Not enough data to export.",
+    tc2_label: "Part:",
+    btn_fan: "FAN",
 
     // This block translates ESP32 string output to the UI
     backend: {
@@ -262,6 +264,8 @@ const I18N = {
     lbl_min: "мин",
     chart_export: "&#128247; Экспорт",
     msg_export_err: "Нет данных для экспорта.",
+    tc2_label: "Деталь:",
+    btn_fan: "ВЕНТ.",
 
     backend: {
       "WAITING": "ОЖИДАНИЕ",

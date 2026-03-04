@@ -7,6 +7,7 @@
 
 // Hardware Objects
 extern MAX6675 thermocouple;
+extern MAX6675 thermocouple2;
 extern PID myPID;
 extern AsyncWebServer server; 
 extern portMUX_TYPE ssrmux;
@@ -15,6 +16,11 @@ extern SemaphoreHandle_t dataMutex;
 // PID Variables
 extern double Setpoint, Input, Output;
 extern uint32_t windowStartTime;
+
+// Secondary Sensor & Fan State
+extern double Input2;
+extern volatile bool hasTC2;
+extern volatile bool fanState;
 
 // State Flags
 extern volatile bool running;

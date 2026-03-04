@@ -33,11 +33,24 @@ const char PAGE_HTML[] PROGMEM = R"rawliteral(
     <div class="pane temp-pane">
       <div class="plabel" data-i18n="temp_label">Temperature</div>
       <div><span id="curT" class="tbig">---</span><span class="tunit">&deg;C</span></div>
+      
+      <!-- ADDED TC2 DISPLAY (Hidden if TC2 is not detected) -->
+      <div id="tc2Div" style="display:none; margin-top: 4px; font-family: var(--mono); color: var(--amb2); font-size: 1.1rem;">
+        <span data-i18n="tc2_label">Part:</span> <span id="curT2">---</span>&deg;C
+      </div>
+
       <div class="sprow"><span data-i18n="target_prefix">Target &nbsp;</span><span id="spV" data-i18n="target_idle">---</span> &deg;C</div>
       <div><span id="pill" class="pill" data-i18n="pill_idle">Idle</span></div>
-      <button id="btnMon" class="btn bsm" style="margin-top:12px; background:#1e2427; border:1px solid var(--bdr); color:var(--mut);" onclick="toggleMonitor()" data-i18n="btn_monitor">
-        &#128200; MONITOR
-      </button>
+      
+      <!-- ADDED FAN BUTTON -->
+      <div style="display:flex; justify-content:center; gap:8px; margin-top:12px;">
+        <button id="btnMon" class="btn bsm" style="flex:1; background:#1e2427; border:1px solid var(--bdr); color:var(--mut);" onclick="toggleMonitor()" data-i18n="btn_monitor">
+          &#128200; MONITOR
+        </button>
+        <button id="btnFan" class="btn bsm" style="flex:1; background:#1e2427; border:1px solid var(--bdr); color:var(--mut);" onclick="toggleFan()">
+          &#10042; <span data-i18n="btn_fan">FAN</span>
+        </button>
+      </div>
     </div>
 
     <div class="pane timer-pane">

@@ -58,14 +58,15 @@ void registerAPI() {
         char profNameBuf[33] = "";
         long rssi = WiFi.RSSI(); 
         
-        double cInput = 0, cSetpoint = 0, cKp = 0, cKi = 0, cKd = 0;
+        double cInput = 0, cInput2 = 0, cSetpoint = 0, cKp = 0, cKi = 0, cKd = 0;
         int cStep = -1, cSteps = 0;
         unsigned long cHold = 0;
         uint32_t cProcStart = 0, cRunStart = 0;
-        bool isRunning = false, isTimerActive = false, isEstop = false, isMon = false;
+        bool isRunning = false, isTimerActive = false, isEstop = false, isMon = false, cHasTC2 = false, cFan = false;
         
         if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
             cInput = Input;
+            cInput2 = Input2;
             cSetpoint = Setpoint;
             cStep = profStep;
             cHold = holdMin;
@@ -75,6 +76,8 @@ void registerAPI() {
             isTimerActive = timerActive;
             isEstop = emergencyStopped;
             isMon = monitoring;
+            cHasTC2 = hasTC2;
+            cFan = fanState;
             cKp = PID_KP; cKi = PID_KI; cKd = PID_KD;
             
             strncpy(msgBuf, statusMsg, sizeof(msgBuf)-1);
@@ -100,12 +103,12 @@ void registerAPI() {
         }
         
         snprintf(buf, sizeof(buf),
-            "{\"temp\":%.1f,\"setpoint\":%.1f,\"msg\":\"%s\","
+            "{\"temp\":%.1f,\"temp2\":%.1f,\"hasTC2\":%s,\"fan\":%s,\"setpoint\":%.1f,\"msg\":\"%s\","
             "\"running\":%s,\"monitoring\":%s,\"profStep\":%d,\"profSteps\":%d,"
             "\"profName\":\"%s\",\"timeLeft\":%ld,\"holdMin\":%d,"
             "\"elapsed\":%lu,\"emergency\":%s,\"rssi\":%ld,"
             "\"kp\":%.2f,\"ki\":%.3f,\"kd\":%.3f}", 
-            cInput, cSetpoint, msgBuf,
+            cInput, cInput2, cHasTC2 ? "true" : "false", cFan ? "true" : "false", cSetpoint, msgBuf,
             isRunning ? "true" : "false",
             isMon ? "true" : "false",
             cStep, cSteps, profNameBuf, timeLeft, holdMinV, 
@@ -118,6 +121,23 @@ void registerAPI() {
         response->addHeader("Connection", "close");
         request->send(response);
     });
+
+    server.on("/fan", HTTP_POST,[](AsyncWebServerRequest *request){
+        if (!request->authenticate(WEB_USER, WEB_PASS)) return request->requestAuthentication();
+        if (!request->hasHeader("X-Oven-Auth")) { sendSafeResponse(request, 403, "CSRF"); return; }
+        
+        bool state = request->arg("state") == "1";
+        
+        portENTER_CRITICAL(&ssrmux);
+        digitalWrite(PIN_FAN, state ? HIGH : LOW);
+        if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(50)) == pdTRUE) {
+            fanState = state;
+            xSemaphoreGive(dataMutex);
+        }
+        portEXIT_CRITICAL(&ssrmux);
+        
+        sendSafeResponse(request, 200, "OK");
+    });    
 
     server.on("/history", HTTP_GET,[](AsyncWebServerRequest *request){
         if (!request->authenticate(WEB_USER, WEB_PASS)) return request->requestAuthentication();
@@ -453,6 +473,23 @@ void registerAPI() {
             lastHistCapture = millis();
         }
 
+        sendSafeResponse(request, 200, "OK");
+    });
+
+    server.on("/fan", HTTP_POST,[](AsyncWebServerRequest *request){
+        if (!request->authenticate(WEB_USER, WEB_PASS)) return request->requestAuthentication();
+        if (!request->hasHeader("X-Oven-Auth")) { sendSafeResponse(request, 403, "CSRF"); return; }
+        
+        bool state = request->arg("state") == "1";
+        
+        portENTER_CRITICAL(&ssrmux);
+        digitalWrite(PIN_FAN, state ? HIGH : LOW);
+        if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(50)) == pdTRUE) {
+            fanState = state;
+            xSemaphoreGive(dataMutex);
+        }
+        portEXIT_CRITICAL(&ssrmux);
+        
         sendSafeResponse(request, 200, "OK");
     });
 }

@@ -11,7 +11,7 @@ var prevMsg = "";
 var prevStep = -1;
 
 var histTemps =[], histSPs =[], histTS = [];
-var liveTemps = [], liveSPs =[], liveTS =[];
+var liveTemps =[], liveSPs =[], liveTS =[];
 var liveStartWall = 0;
 var LIVE_MAX = 36000; 
 var statusPending = false;
@@ -395,7 +395,7 @@ function doStart() {
   var fd = new FormData();
   
   setRunning(true);
-  histTemps =[]; histSPs = []; histTS =[];
+  histTemps =[]; histSPs =[]; histTS =[];
   liveTemps =[]; liveSPs =[]; liveTS =[];
   liveStartWall = 0;
   drawChart();
@@ -503,6 +503,54 @@ function scheduleStatus(delay) {
   statusTimer = setTimeout(pollStatus, Math.max(2000, delay)); 
 }
 
+function toggleFan() {
+  var btn = document.getElementById("btnFan");
+  var isFanOn = btn.classList.contains("fan-active");
+  var newState = isFanOn ? "0" : "1";
+
+  var fd = new FormData();
+  fd.append("state", newState);
+
+  fetch("/fan", {method:"POST", headers:{"X-Oven-Auth":"1"}, body:fd})
+    .then(r => {
+        if(r.ok) {
+            if(newState === "1") {
+                btn.classList.add("fan-active");
+                btn.style.borderColor = "var(--blu)";
+                btn.style.color = "var(--blu)";
+            } else {
+                btn.classList.remove("fan-active");
+                btn.style.borderColor = "var(--bdr)";
+                btn.style.color = "var(--mut)";
+            }
+        } else {
+            console.error("Fan toggle failed");
+        }
+    });
+}
+
+function toggleMonitor() {
+  var btn = document.getElementById("btnMon");
+  var isMon = btn.classList.contains("mon-active");
+  var newState = isMon ? "0" : "1";
+
+  var fd = new FormData();
+  fd.append("state", newState);
+
+  fetch("/monitor", {method:"POST", headers:{"X-Oven-Auth":"1"}, body:fd})
+    .then(r => {
+        if(r.ok) {
+            if(newState==="1") {
+                addLog(LANG.msg_mon_start, "ev");
+                histTemps=[]; histSPs=[]; histTS=[]; liveTemps=[]; liveSPs=[]; liveTS=[];
+                liveStartWall = 0; 
+            } else {
+                addLog(LANG.msg_mon_stop, "ev");
+            }
+        }
+    });
+}
+
 function pollStatus() {
   if (statusPending) { scheduleStatus(2500); return; }
   statusPending = true;
@@ -552,6 +600,28 @@ function pollStatus() {
           btnMon.innerHTML = LANG.btn_monitor;
       }
       btnMon.disabled = d.running;
+
+      // Handle FAN State visually
+      var btnFan = document.getElementById("btnFan");
+      if (d.fan) {
+          btnFan.classList.add("fan-active");
+          btnFan.style.borderColor = "var(--blu)";
+          btnFan.style.color = "var(--blu)";
+      } else {
+          btnFan.classList.remove("fan-active");
+          btnFan.style.borderColor = "var(--bdr)";
+          btnFan.style.color = "var(--mut)";
+      }
+
+      // Handle TC2 Board Temp Visibility
+      var tc2Div = document.getElementById("tc2Div");
+      if (d.hasTC2) {
+          tc2Div.style.display = "block";
+          var temp2 = validateNumber(d.temp2, -50, 500, 0);
+          document.getElementById("curT2").textContent = temp2.toFixed(1);
+      } else {
+          tc2Div.style.display = "none";
+      }
 
       var temp = validateNumber(d.temp, -50, 500, 0);
       var sp = d.setpoint ? validateNumber(d.setpoint, 0, 300, 0) : 0;
@@ -669,28 +739,6 @@ function scheduleHistory(delay) {
   historyTimer = setTimeout(pollHistory, delay);
 }
 
-function toggleMonitor() {
-  var btn = document.getElementById("btnMon");
-  var isMon = btn.classList.contains("mon-active");
-  var newState = isMon ? "0" : "1";
-
-  var fd = new FormData();
-  fd.append("state", newState);
-
-  fetch("/monitor", {method:"POST", headers:{"X-Oven-Auth":"1"}, body:fd})
-    .then(r => {
-        if(r.ok) {
-            if(newState==="1") {
-                addLog(LANG.msg_mon_start, "ev");
-                histTemps=[]; histSPs=[]; histTS=[]; liveTemps=[]; liveSPs=[]; liveTS=[];
-                liveStartWall = 0; 
-            } else {
-                addLog(LANG.msg_mon_stop, "ev");
-            }
-        }
-    });
-}
-
 function pollHistory() {
   if (historyPending) { scheduleHistory(30000); return; }
   historyPending = true;
@@ -702,7 +750,7 @@ function pollHistory() {
       
       // If empty or no points
       if (buf.byteLength < 2) {
-        histTemps = []; histSPs = []; histTS =[];
+        histTemps =[]; histSPs = []; histTS =[];
         if (graphMode === "hist") drawChart();
         scheduleHistory(30000);
         return;

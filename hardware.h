@@ -3,21 +3,18 @@
 #include "state.h"
 #include "config.h"
 
-// TC Verification State
 uint32_t tcVerifyStartTime = 0;
 double tcVerifyFirstReading = 0;
-
-// Thermal Runaway Protection
 uint32_t fullPowerStartTime = 0;
 const uint32_t RUNAWAY_TIMEOUT_MS = 180000; 
-
-// Runaway detection baseline
 double runawayBaselineTemp = 0;
 
 void onDeadmanTimer(void* arg) {
     if ((millis() - ssrDeadmanKick) > SSR_DEADMAN_MS) {
         portENTER_CRITICAL(&ssrmux);
         digitalWrite(PIN_SSR, LOW);
+        digitalWrite(PIN_FAN, LOW);
+        fanState = false;
         emergencyStopped = true; 
         portEXIT_CRITICAL(&ssrmux);
     }
@@ -26,6 +23,8 @@ void onDeadmanTimer(void* arg) {
 void emergencyStop(const char* reason) {
     portENTER_CRITICAL(&ssrmux);
     digitalWrite(PIN_SSR, LOW);
+    digitalWrite(PIN_FAN, LOW);
+    fanState = false;
     emergencyStopped = true;
     portEXIT_CRITICAL(&ssrmux);
     
@@ -37,10 +36,8 @@ void emergencyStop(const char* reason) {
         activeProfilePtr = nullptr;
         profStep = -1;
         Output = 0;
-        
         tcVerifyPending = false;
         myPID.SetMode(MANUAL);
-        
         snprintf(statusMsg, sizeof(statusMsg), "%s%s", L_ERR_PREFIX, reason);
         xSemaphoreGive(dataMutex);
     }
@@ -48,8 +45,12 @@ void emergencyStop(const char* reason) {
 }
 
 void stopReflow() {
+    portENTER_CRITICAL(&ssrmux);
     digitalWrite(PIN_SSR, LOW);
-    
+    digitalWrite(PIN_FAN, LOW);
+    fanState = false;
+    portEXIT_CRITICAL(&ssrmux);
+
     if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(200)) == pdTRUE) {
         running = false;
         timerActive = false;
@@ -58,18 +59,15 @@ void stopReflow() {
         activeProfilePtr = nullptr;
         profStep = -1;
         Output = 0;
-        
         tcFailCount = 0; 
         tcVerifyPending = false;
         myPID.SetMode(MANUAL);
         runawayBaselineTemp = 0;
         fullPowerStartTime = 0;
-        
         strncpy(statusMsg, L_STATE_STOPPED, sizeof(statusMsg) - 1);
         statusMsg[sizeof(statusMsg) - 1] = '\0';
         xSemaphoreGive(dataMutex);
     }
-    Serial.println("[INFO] User stopped run.");
 }
 
 void beginStep(int step) {
@@ -101,7 +99,9 @@ void beginStep(int step) {
 }
 
 void resetRunState() {    
+    portENTER_CRITICAL(&ssrmux);
     digitalWrite(PIN_SSR, LOW);
+    portEXIT_CRITICAL(&ssrmux);
 
     if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(200)) == pdTRUE) {
         running = false;
@@ -110,17 +110,14 @@ void resetRunState() {
         finished = false;
         profStep = -1;
         activeProfilePtr = nullptr;
-        
         history.head = 0;
         history.count = 0;
-        
         heatStartTime = 0;
         tcFailCount = 0;
         tcVerifyPending = false;
         stabStart = 0;
         Output = 0;
         fullPowerStartTime = 0; 
-        
         currentStepPeak = 0; 
         stepStartTemp = 0;
         runawayBaselineTemp = 0; 
@@ -128,7 +125,6 @@ void resetRunState() {
         
         myPID.SetMode(MANUAL);
         myPID.SetOutputLimits(0, PID_WINDOW_SIZE);
-
         xSemaphoreGive(dataMutex);
     }
     
@@ -152,7 +148,6 @@ void updateThermocouple() {
 
     if (tcVerifyPending) {
         if (now - tcVerifyStartTime < 250) return; 
-        
         double v2 = thermocouple.readCelsius();
         tcVerifyPending = false;
         
@@ -173,6 +168,17 @@ void updateThermocouple() {
     }
 
     double v = thermocouple.readCelsius();
+    double v2 = thermocouple2.readCelsius();
+
+    if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(50)) == pdTRUE) {
+        if (!isValidTCReading(v2)) {
+            hasTC2 = false;
+        } else {
+            Input2 = hasTC2 ? ((Input2 * 0.7) + (v2 * 0.3)) : v2;
+            hasTC2 = true;
+        }
+        xSemaphoreGive(dataMutex);
+    }
 
     if (!isValidTCReading(v)) {
         tcFailCount++;
@@ -218,38 +224,29 @@ void updateThermocouple() {
 void runControlLoop() {
     uint32_t now = millis();
 
-    double snapSP;
+    double snapSP, snapInput, snapInput2, snapStepStart, snapPeak;
     unsigned long snapHold;
-    double snapInput;
-    double snapStepStart;
-    double snapPeak;
-    bool snapTimerActive;
+    bool snapTimerActive, snapHasTC2;
     int snapProfStep;
     
     if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(50)) == pdTRUE) {
         snapSP = Setpoint;
         snapHold = holdMin;
         snapInput = Input;
+        snapInput2 = Input2;
+        snapHasTC2 = hasTC2;
         snapStepStart = stepStartTemp;
         snapPeak = currentStepPeak;
         snapTimerActive = timerActive;
         snapProfStep = profStep;
         xSemaphoreGive(dataMutex);
-    } else {
-        return; 
-    }
+    } else { return; }
     
-    if (snapInput > SAFETY_MAX_TEMP) { 
-        emergencyStop(L_ERR_MAX_TEMP); 
-        return; 
-    }
-
+    if (snapInput > SAFETY_MAX_TEMP) { emergencyStop(L_ERR_MAX_TEMP); return; }
     if (tcVerifyPending) return;
 
     bool estopFlag = false;
-    portENTER_CRITICAL(&ssrmux);
-    estopFlag = emergencyStopped;
-    portEXIT_CRITICAL(&ssrmux);
+    portENTER_CRITICAL(&ssrmux); estopFlag = emergencyStopped; portEXIT_CRITICAL(&ssrmux);
 
     if (estopFlag) {
         if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(50)) == pdTRUE) {
@@ -264,25 +261,19 @@ void runControlLoop() {
 
     if (running) {
         double maxExpected = (snapSP > snapStepStart) ? snapSP : snapStepStart;
-        
         if (snapInput > (maxExpected + 20.0) && snapInput > 60.0) {
-            emergencyStop(L_ERR_OVERSHOOT);
-            return;
+            emergencyStop(L_ERR_OVERSHOOT); return;
         }
-    
         if (!snapTimerActive) {
             if (snapSP >= snapStepStart) {
                 if (snapInput > snapPeak) {
                     if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(50)) == pdTRUE) {
-                        currentStepPeak = snapInput;
-                        snapPeak = snapInput;
+                        currentStepPeak = snapInput; snapPeak = snapInput;
                         xSemaphoreGive(dataMutex);
                     }
                 }
-                
                 if (snapInput < snapSP && snapPeak > 40 && snapInput < (snapPeak - 15.0)) {
-                    emergencyStop(L_ERR_DROP); 
-                    return;
+                    emergencyStop(L_ERR_DROP); return;
                 }
             }
         }
@@ -290,8 +281,7 @@ void runControlLoop() {
 
     bool shouldCapture = false;
     if (forceHistoryCapture) {
-        shouldCapture = true;
-        forceHistoryCapture = false;
+        shouldCapture = true; forceHistoryCapture = false;
     } else if ((running || monitoring || snapInput > 25.0) && (now - lastHistCapture >= HIST_INTERVAL)) {
         shouldCapture = true;
     }
@@ -301,11 +291,9 @@ void runControlLoop() {
             int idx = history.head;
             history.temps[idx] = (int16_t)round(Input * 10.0);
             history.sps[idx] = (int16_t)round(Setpoint);
-            
             uint32_t elapsed = (now >= runStart) ? (now - runStart) / 1000 : 0;
             if (elapsed > 65535) elapsed = 65535;
             history.ts_offsets[idx] = (uint16_t)elapsed;
-            
             history.head = (idx + 1) % HIST_SIZE;
             if (history.count < HIST_SIZE) history.count++;
             xSemaphoreGive(dataMutex);
@@ -334,30 +322,24 @@ void runControlLoop() {
     }
     
     if (Output >= PID_WINDOW_SIZE * 0.9) { 
-        if (fullPowerStartTime == 0) {
-            fullPowerStartTime = now;
-            runawayBaselineTemp = snapInput;
-        }
+        if (fullPowerStartTime == 0) { fullPowerStartTime = now; runawayBaselineTemp = snapInput; }
         else if (now - fullPowerStartTime > RUNAWAY_TIMEOUT_MS) {
             if (snapInput < (snapSP - 10)) {
-                if ((snapInput - runawayBaselineTemp) < 5.0) {
-                     emergencyStop(L_ERR_RUNAWAY);
-                     return;
-                } else {
-                     runawayBaselineTemp = snapInput;
-                     fullPowerStartTime = now; 
-                }
+                if ((snapInput - runawayBaselineTemp) < 5.0) { emergencyStop(L_ERR_RUNAWAY); return; } 
+                else { runawayBaselineTemp = snapInput; fullPowerStartTime = now; }
             }
         }
-    } else if (Output < PID_WINDOW_SIZE * 0.85) {
-        fullPowerStartTime = 0;
-    }
+    } else if (Output < PID_WINDOW_SIZE * 0.85) { fullPowerStartTime = 0; }
 
-    double err = fabs(snapInput - snapSP);
+    // --- TIMER TRIGGER LOGIC (Uses TC2 if detected) ---
+    double triggerTemp = snapHasTC2 ? snapInput2 : snapInput;
+    double err = fabs(triggerTemp - snapSP);
     bool isStable = false;
 
     if (snapSP < 50.0 && snapStepStart > snapSP) {
-        isStable = (snapInput <= snapSP + 5.0);
+        isStable = (triggerTemp <= snapSP + 5.0);
+    } else if (snapSP > snapStepStart) {
+        isStable = (triggerTemp >= snapSP - STABLE_TOLERANCE);
     } else {
         isStable = (err <= STABLE_TOLERANCE);
     }
@@ -398,7 +380,11 @@ void runControlLoop() {
                 } else {
                     if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(50)) == pdTRUE) {
                         running = false; finished = true; profMode = false; 
+                        portENTER_CRITICAL(&ssrmux);
                         digitalWrite(PIN_SSR, LOW); 
+                        digitalWrite(PIN_FAN, LOW);
+                        fanState = false;
+                        portEXIT_CRITICAL(&ssrmux);
                         strncpy(statusMsg, L_STATE_DONE, sizeof(statusMsg) - 1);
                         statusMsg[sizeof(statusMsg) - 1] = '\0';
                         forceHistoryCapture = true;
@@ -408,7 +394,11 @@ void runControlLoop() {
             } else {
                 if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(50)) == pdTRUE) {
                     running = false; finished = true; 
-                    digitalWrite(PIN_SSR, LOW); 
+                    portENTER_CRITICAL(&ssrmux);
+                    digitalWrite(PIN_SSR, LOW);
+                    digitalWrite(PIN_FAN, LOW);
+                    fanState = false;
+                    portEXIT_CRITICAL(&ssrmux);
                     strncpy(statusMsg, L_STATE_END, sizeof(statusMsg) - 1);
                     statusMsg[sizeof(statusMsg) - 1] = '\0';
                     forceHistoryCapture = true;
