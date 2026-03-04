@@ -188,7 +188,7 @@ header {
   text-transform: uppercase;
   color:          var(--mut);
   margin-bottom:  14px;
-  padding-bottom: 8px;
+  padding-bottom:  8px;
   border-bottom:  1px solid var(--bdr);
 }
 
@@ -670,6 +670,34 @@ canvas {
 .le.warn     { color: var(--amb);  }
 .le.err      { color: var(--red);  }
 .le.success  { color: var(--grn);  }
+
+
+/* LOGO PANE (Bottom Left Corner) */
+
+.logo-pane {
+  display:         flex;
+  justify-content: center;
+  align-items:     center;
+  padding:         20px;
+  background:      var(--sur);
+  margin-top:      auto;  /* Pushes element to absolute bottom */
+}
+
+.logo-pane img {
+  width:       100px;
+  height:      132px;
+  opacity:     0.7;
+  /* Subtle "burn-in" ember glow using the alpha channel */
+  filter:      drop-shadow(0 0 6px rgba(232, 144, 10, 0.5)) brightness(1.1);
+  transition:  all 0.4s ease;
+}
+
+.logo-pane img:hover {
+  opacity:     1;
+  transform:   scale(1.03);
+  /* "Heats up" and glows brighter on hover */
+  filter:      drop-shadow(0 0 16px rgba(232, 144, 10, 0.9)) brightness(1.3);
+}
 
 
 /* RESPONSIVE  (≤ 700 px) */

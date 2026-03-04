@@ -57,7 +57,7 @@
 const char WEB_LANG_JS[] PROGMEM = R"rawliteral(
 const I18N = {
   en: {
-    title: "CGFЦЭХ",
+    title: "IllOven",
     subtitle: "Temperature Controller",
     badge_offline: "OFFLINE",
     badge_online: "ONLINE",
@@ -182,7 +182,7 @@ const I18N = {
     }
   },
   ru: {
-    title: "CGFЦЭХ",
+    title: "IllOven",
     subtitle: "Контроллер температуры",
     badge_offline: "ОФФЛАЙН",
     badge_online: "Онлайн",

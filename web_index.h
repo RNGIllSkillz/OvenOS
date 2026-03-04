@@ -137,6 +137,12 @@ const char PAGE_HTML[] PROGMEM = R"rawliteral(
       </div>
 
     </div>
+
+    <!-- ADDED LOGO PANE (Bottom Left) -->
+    <div class="logo-pane">
+      <img src="/favicon.ico" alt="Logo">
+    </div>
+
   </div>
 
   <div class="right">

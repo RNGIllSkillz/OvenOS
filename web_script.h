@@ -816,6 +816,7 @@ function exportChart() {
     ctxOff.fillStyle = "#ffffff";
     ctxOff.fillRect(0, 0, W, H);
 
+    // Keep the original padding so the graph is full size
     var pad = { t: 60, r: 40, b: 70, l: 80 };
     var cw = W - pad.l - pad.r;
     var ch = H - pad.t - pad.b;
@@ -835,32 +836,44 @@ function exportChart() {
     function px(x) { return pad.l + ((x - xMin) / xRng) * cw; }
     function py(y) { return pad.t + ch - ((y - yMin) / yRng) * ch; }
 
+    // --- Header & Legend Rendering ---
     ctxOff.fillStyle = "#2c3e50";
-    ctxOff.font = "bold 24px Arial, sans-serif";
+    ctxOff.font = "bold 28px Arial, sans-serif";
     ctxOff.textAlign = "left";
-    ctxOff.textBaseline = "alphabetic";
+    ctxOff.textBaseline = "middle";
     
     var exportTitle = (LANG && LANG.title) ? LANG.title : "ReflowOven";
     var textX = pad.l;
+    var headerCenterY = pad.t - 30; // Centered in the 60px space above the graph
 
     if (iconImg) {
-      ctxOff.drawImage(iconImg, pad.l, pad.t - 49, 24, 24);
-      textX += 34; 
+      // Scale the 100x132 image down to 40x53 to fit exactly in the header.
+      // Sits right between the top edge (Y=0) and the graph border (Y=60).
+      ctxOff.drawImage(iconImg, pad.l, pad.t - 56, 40, 53);
+      textX += 55; // Shift title right to clear the 40px wide image + 15px gap
     }
     
-    ctxOff.fillText(exportTitle, textX, pad.t - 30);
+    ctxOff.fillText(exportTitle, textX, headerCenterY);
+
+    // Dynamic legend placement trailing the title
+    var titleWidth = ctxOff.measureText(exportTitle).width;
+    var legendX = textX + titleWidth + 40;
 
     ctxOff.font = "16px Arial, sans-serif";
-    ctxOff.fillStyle = "#3498db";
-    ctxOff.fillRect(pad.l + 260, pad.t - 35, 30, 4);
-    ctxOff.fillStyle = "#34495e";
-    ctxOff.fillText("Temperature", pad.l + 300, pad.t - 28);
     
-    ctxOff.fillStyle = "#e74c3c";
-    ctxOff.fillRect(pad.l + 420, pad.t - 35, 30, 4);
+    // Temperature Legend
+    ctxOff.fillStyle = "#3498db";
+    ctxOff.fillRect(legendX, headerCenterY - 3, 30, 6);
     ctxOff.fillStyle = "#34495e";
-    ctxOff.fillText("Setpoint", pad.l + 460, pad.t - 28);
+    ctxOff.fillText("Temperature", legendX + 40, headerCenterY);
+    
+    // Setpoint Legend
+    ctxOff.fillStyle = "#e74c3c";
+    ctxOff.fillRect(legendX + 160, headerCenterY - 3, 30, 6);
+    ctxOff.fillStyle = "#34495e";
+    ctxOff.fillText("Setpoint", legendX + 200, headerCenterY);
 
+    // --- Y-Axis ---
     ctxOff.strokeStyle = "#ecf0f1";
     ctxOff.lineWidth = 1;
     ctxOff.fillStyle = "#7f8c8d";
@@ -879,6 +892,7 @@ function exportChart() {
       ctxOff.fillText(Math.round(yv), pad.l - 15, yp);
     }
 
+    // --- X-Axis ---
     var xSteps = 12;
     ctxOff.textAlign = "center";
     ctxOff.textBaseline = "top";
@@ -892,10 +906,12 @@ function exportChart() {
       ctxOff.fillText(Math.round(xv), xp, pad.t + ch + 15);
     }
 
+    // Chart Border
     ctxOff.strokeStyle = "#bdc3c7";
     ctxOff.lineWidth = 1.5;
     ctxOff.strokeRect(pad.l, pad.t, cw, ch);
 
+    // Axis Labels
     ctxOff.fillStyle = "#2c3e50";
     ctxOff.font = "italic 16px Arial, sans-serif";
     ctxOff.textAlign = "center";
@@ -906,6 +922,8 @@ function exportChart() {
     ctxOff.restore();
     ctxOff.fillText("Time (s)", pad.l + cw / 2, pad.t + ch + 45);
 
+    // --- Line Drawing ---
+    // Setpoints
     ctxOff.strokeStyle = "#e74c3c";
     ctxOff.lineWidth = 3;
     ctxOff.beginPath();
@@ -915,6 +933,7 @@ function exportChart() {
     }
     ctxOff.stroke();
 
+    // Actual Temperatures
     ctxOff.strokeStyle = "#3498db";
     ctxOff.lineWidth = 3;
     ctxOff.lineJoin = "round";
@@ -925,6 +944,7 @@ function exportChart() {
     }
     ctxOff.stroke();
 
+    // --- Download Handling ---
     if (offCanvas.toBlob) {
       offCanvas.toBlob(function(blob) {
         var url = URL.createObjectURL(blob);
