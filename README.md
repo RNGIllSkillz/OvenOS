@@ -50,6 +50,7 @@ Compile & Flash: Upload the firmware to your ESP32.
 Navigate: Open your browser to the IP address shown in the Serial Monitor (or the AP IP if your WiFi was unavailable).
 
 🧰 Dependencies
+
 This project requires the following libraries:
 
 1. ESPAsyncWebServer (and AsyncTCP) by ESP32Async
