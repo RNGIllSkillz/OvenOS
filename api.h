@@ -122,23 +122,6 @@ void registerAPI() {
         request->send(response);
     });
 
-    server.on("/fan", HTTP_POST,[](AsyncWebServerRequest *request){
-        if (!request->authenticate(WEB_USER, WEB_PASS)) return request->requestAuthentication();
-        if (!request->hasHeader("X-Oven-Auth")) { sendSafeResponse(request, 403, "CSRF"); return; }
-        
-        bool state = request->arg("state") == "1";
-        
-        portENTER_CRITICAL(&ssrmux);
-        digitalWrite(PIN_FAN, state ? HIGH : LOW);
-        if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(50)) == pdTRUE) {
-            fanState = state;
-            xSemaphoreGive(dataMutex);
-        }
-        portEXIT_CRITICAL(&ssrmux);
-        
-        sendSafeResponse(request, 200, "OK");
-    });    
-
     server.on("/history", HTTP_GET,[](AsyncWebServerRequest *request){
         if (!request->authenticate(WEB_USER, WEB_PASS)) return request->requestAuthentication();
         
@@ -480,14 +463,17 @@ void registerAPI() {
         if (!request->authenticate(WEB_USER, WEB_PASS)) return request->requestAuthentication();
         if (!request->hasHeader("X-Oven-Auth")) { sendSafeResponse(request, 403, "CSRF"); return; }
         
-        bool state = request->arg("state") == "1";
-        
-        portENTER_CRITICAL(&ssrmux);
-        digitalWrite(PIN_FAN, state ? HIGH : LOW);
-        if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(50)) == pdTRUE) {
+        bool state = request->arg("state") == "1";        
+        if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
             fanState = state;
             xSemaphoreGive(dataMutex);
+        } else {
+            sendSafeResponse(request, 503, "Busy");
+            return;
         }
+
+        portENTER_CRITICAL(&ssrmux);
+        digitalWrite(PIN_FAN, state ? HIGH : LOW);
         portEXIT_CRITICAL(&ssrmux);
         
         sendSafeResponse(request, 200, "OK");

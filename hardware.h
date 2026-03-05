@@ -264,19 +264,17 @@ void runControlLoop() {
         if (snapInput > (maxExpected + 20.0) && snapInput > 60.0) {
             emergencyStop(L_ERR_OVERSHOOT); return;
         }
-        if (!snapTimerActive) {
-            if (snapSP >= snapStepStart) {
-                if (snapInput > snapPeak) {
-                    if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(50)) == pdTRUE) {
-                        currentStepPeak = snapInput; snapPeak = snapInput;
-                        xSemaphoreGive(dataMutex);
-                    }
-                }
-                if (snapInput < snapSP && snapPeak > 40 && snapInput < (snapPeak - 15.0)) {
-                    emergencyStop(L_ERR_DROP); return;
+        if (snapSP >= snapStepStart) {
+            if (snapInput > snapPeak) {
+                if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(50)) == pdTRUE) {
+                    currentStepPeak = snapInput; snapPeak = snapInput;
+                    xSemaphoreGive(dataMutex);
                 }
             }
-        }
+            if (snapInput < snapSP && snapPeak > 40 && snapInput < (snapPeak - 15.0)) {
+                emergencyStop(L_ERR_DROP); return;
+            }
+        }        
     }
 
     bool shouldCapture = false;
@@ -329,7 +327,7 @@ void runControlLoop() {
                 else { runawayBaselineTemp = snapInput; fullPowerStartTime = now; }
             }
         }
-    } else if (Output < PID_WINDOW_SIZE * 0.85) { fullPowerStartTime = 0; }
+    } else if (Output < PID_WINDOW_SIZE * 0.5) { fullPowerStartTime = 0; }
 
     // --- TIMER TRIGGER LOGIC (Uses TC2 if detected) ---
     double triggerTemp = snapHasTC2 ? snapInput2 : snapInput;
