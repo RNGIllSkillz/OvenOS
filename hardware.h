@@ -13,8 +13,8 @@ void onDeadmanTimer(void* arg) {
     if ((millis() - ssrDeadmanKick) > SSR_DEADMAN_MS) {
         portENTER_CRITICAL(&ssrmux);
         digitalWrite(PIN_SSR, LOW);
-        digitalWrite(PIN_FAN, HIGH);
-        fanState = true;   
+        digitalWrite(PIN_FAN, LOW); //LOW is on
+        fanState = false;   
         emergencyStopped = true; 
         portEXIT_CRITICAL(&ssrmux);
     }
@@ -218,25 +218,34 @@ void updateThermocouple() {
 }
 
 void manageFan() {
-    bool autoFan = false;
+    //autoFan should be inverted for the npn transistor
+    float cpuTemp = temperatureRead(); // Read the ESP32 CPU temperature once
     
     // Grab a quick thread-safe reading of the oven air temperature (TC1)
     if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(50)) == pdTRUE) {
         
+        bool autoFan = fanState; // Default to current state to create our Hysteresis memory
+        
         // Rule 1: Fail-safe. If thermocouple is failing, reading 0 or disconnected -> Fan ON
         if (tcFailCount > 0 || isnan(Input) || Input <= 0.01) {
-            autoFan = true;
+            autoFan = false;
         } 
         // Rule 2: Oven internal temp > 50C -> Fan ON
-        else if (Input > 50.0 || temperatureRead() > 55.0) {
-            autoFan = true;
-        } 
-        // Rule 3: Temp <= 50C -> Fan OFF
-        else {
+        else if (Input > 50.0) {
             autoFan = false;
+        } 
+        // Rule 3: ESP32 CPU gets too hot -> Fan ON
+        else if (cpuTemp > 60.0) {
+            autoFan = false;
+        } 
+        // Rule 4: Oven is cool (<= 50C) AND CPU has cooled down (< 58C) -> Fan OFF
+        else if (cpuTemp < 58.0) {
+            autoFan = true;
         }
+        // If CPU is between 58.0 and 60.0, none of the above trigger, 
+        // so autoFan remains equal to fanState (it stays on if it was on, or off if it was off).
 
-        // Apply state if it needs to change
+        // Apply state to hardware if it needs to change
         if (fanState != autoFan) {
             fanState = autoFan;
             portENTER_CRITICAL(&ssrmux);
