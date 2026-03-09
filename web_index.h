@@ -22,6 +22,8 @@ const char PAGE_HTML[] PROGMEM = R"rawliteral(
       <option value="ru">RU</option>
     </select>
 
+    <div id="cpu-badge" class="wifi-badge" title="ESP32 CPU Temperature">CPU: --&deg;C</div>
+
     <div id="wifi-badge" class="wifi-badge">WiFi: --</div>
 
     <div id="badge">&#9679; <span data-i18n="badge_offline">OFFLINE</span></div>

@@ -56,7 +56,8 @@ void registerAPI() {
         char buf[512];
         char msgBuf[64] = "busy";
         char profNameBuf[33] = "";
-        long rssi = WiFi.RSSI(); 
+        long rssi = WiFi.RSSI();
+        float cpuTemp = temperatureRead();
         
         double cInput = 0, cInput2 = 0, cSetpoint = 0, cKp = 0, cKi = 0, cKd = 0;
         int cStep = -1, cSteps = 0;
@@ -107,14 +108,14 @@ void registerAPI() {
             "\"running\":%s,\"monitoring\":%s,\"profStep\":%d,\"profSteps\":%d,"
             "\"profName\":\"%s\",\"timeLeft\":%ld,\"holdMin\":%d,"
             "\"elapsed\":%lu,\"emergency\":%s,\"rssi\":%ld,"
-            "\"kp\":%.2f,\"ki\":%.3f,\"kd\":%.3f}", 
+            "\"kp\":%.2f,\"ki\":%.3f,\"kd\":%.3f,\"cpuTemp\":%.1f}",
             cInput, cInput2, cHasTC2 ? "true" : "false", cFan ? "true" : "false", cSetpoint, msgBuf,
             isRunning ? "true" : "false",
             isMon ? "true" : "false",
             cStep, cSteps, profNameBuf, timeLeft, holdMinV, 
             (millis() - cRunStart) / 1000UL,
             isEstop ? "true" : "false",
-            rssi, cKp, cKi, cKd 
+            rssi, cKp, cKi, cKd, cpuTemp
         );
         
         AsyncWebServerResponse *response = request->beginResponse(200, "application/json", String(buf));
@@ -144,7 +145,7 @@ void registerAPI() {
             return;
         }
 
-        size_t totalLen = 2 + (cnt * 6);
+        size_t totalLen = 2 + (cnt * 8);
 
         // Calculates bytes linearly from circular buffer directly into TCP packets!
         AsyncWebServerResponse *response = request->beginResponse("application/octet-stream", totalLen, 
@@ -165,21 +166,22 @@ void registerAPI() {
 
                 int base = (head - cnt + HIST_SIZE) % HIST_SIZE;
 
-                while (maxLen > 0 && index < (2 + (cnt * 6))) {
+                while (maxLen > 0 && index < (2 + (cnt * 8))) {
                     size_t dataIndex = index - 2;
-                    size_t pointIndex = dataIndex / 6;
-                    size_t byteOffset = dataIndex % 6;
+                    size_t pointIndex = dataIndex / 8;
+                    size_t byteOffset = dataIndex % 8;
 
                     if (pointIndex >= cnt) break;
 
                     int realIdx = (base + pointIndex) % HIST_SIZE;
 
-                    uint8_t ptBuf[6];
+                    uint8_t ptBuf[8];
                     memcpy(&ptBuf[0], (const void*)&history.ts_offsets[realIdx], 2);
                     memcpy(&ptBuf[2], (const void*)&history.temps[realIdx], 2);
-                    memcpy(&ptBuf[4], (const void*)&history.sps[realIdx], 2);
+                    memcpy(&ptBuf[4], (const void*)&history.temps2[realIdx], 2);
+                    memcpy(&ptBuf[6], (const void*)&history.sps[realIdx], 2);
 
-                    size_t toWrite = (maxLen > (6 - byteOffset)) ? (6 - byteOffset) : maxLen;
+                    size_t toWrite = (maxLen > (8 - byteOffset)) ? (8 - byteOffset) : maxLen;
                     memcpy(buffer, ptBuf + byteOffset, toWrite);
 
                     bytesWritten += toWrite;

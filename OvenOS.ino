@@ -1,5 +1,5 @@
 // ============================================================
-//  IllOvenOS v3.0
+//  IllOvenOS v3.1
 // ============================================================
 #include <WiFi.h>
 #include <esp_wifi.h>
@@ -73,7 +73,7 @@ SemaphoreHandle_t dataMutex;
 void setup() {
     Serial.begin(115200);
     delay(100);
-    Serial.println("\n[INIT] IllOvenOS v3.0");
+    Serial.println("\n[INIT] IllOvenOS v3.1");
 
     dataMutex = xSemaphoreCreateMutex();
     configASSERT(dataMutex); 
@@ -141,6 +141,7 @@ void setup() {
     esp_timer_start_periodic(deadman_timer, 500000); 
     
     ssrDeadmanKick = millis();
+
     Serial.println("[INIT] Ready");
 }
 
@@ -158,7 +159,7 @@ void loop() {
     }
     
     static uint32_t lastControl = 0;
-    if (now - lastControl >= 200) {
+    if (now - lastControl >= PID_WINDOW_SIZE) {
         lastControl = now;
         updateThermocouple();
         runControlLoop();

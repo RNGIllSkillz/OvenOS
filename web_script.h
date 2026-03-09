@@ -10,8 +10,8 @@ var graphMode = "live";
 var prevMsg = "";
 var prevStep = -1;
 
-var histTemps =[], histSPs =[], histTS = [];
-var liveTemps =[], liveSPs =[], liveTS =[];
+var histTemps =[], histTemps2 =[], histSPs =[], histTS = [];
+var liveTemps =[], liveTemps2 =[], liveSPs =[], liveTS =[];
 var liveStartWall = 0;
 var LIVE_MAX = 36000; 
 var statusPending = false;
@@ -109,12 +109,13 @@ function syncLiveGraph() {
   
   var cutoff = liveTS.length > 0 ? liveTS[0] : Infinity;
   var added = 0;
-  var newTS =[], newTemps =[], newSPs =[];
+  var newTS =[], newTemps =[], newTemps2 =[], newSPs =[];
   
   for (var i = 0; i < histTS.length; i++) {
     if (histTS[i] < cutoff) {
       newTS.push(histTS[i]);
       newTemps.push(histTemps[i]);
+      newTemps2.push(histTemps2[i]);
       newSPs.push(histSPs[i]);
       added++;
     }
@@ -123,12 +124,14 @@ function syncLiveGraph() {
   if (added > 0) {
     liveTS = newTS.concat(liveTS);
     liveTemps = newTemps.concat(liveTemps);
+    liveTemps2 = newTemps2.concat(liveTemps2);
     liveSPs = newSPs.concat(liveSPs);
     
     if (liveTS.length > LIVE_MAX) {
       var excess = liveTS.length - LIVE_MAX;
       liveTS = liveTS.slice(excess);
       liveTemps = liveTemps.slice(excess);
+      liveTemps2 = liveTemps2.slice(excess);
       liveSPs = liveSPs.slice(excess);
     }
     
@@ -157,9 +160,10 @@ function drawChart() {
   ctx.fillStyle = "#0d0f10";
   ctx.fillRect(0, 0, W, H);
 
-  var allTemps = graphMode === "live" ? liveTemps : histTemps;
-  var allSPs   = graphMode === "live" ? liveSPs   : histSPs;
-  var allTS    = graphMode === "live" ? liveTS    : histTS;
+  var allTemps  = graphMode === "live" ? liveTemps : histTemps;
+  var allTemps2 = graphMode === "live" ? liveTemps2 : histTemps2;
+  var allSPs    = graphMode === "live" ? liveSPs   : histSPs;
+  var allTS     = graphMode === "live" ? liveTS    : histTS;
 
   if (allTS.length === 0) {
     ctx.fillStyle = "#4a5058"; 
@@ -169,10 +173,10 @@ function drawChart() {
     return;
   }
   
-  var visTemps, visSPs, visTS;
+  var visTemps, visTemps2, visSPs, visTS;
   
   if (chartScale === 0) {
-    visTemps = allTemps; visSPs = allSPs; visTS = allTS;
+    visTemps = allTemps; visTemps2 = allTemps2; visSPs = allSPs; visTS = allTS;
   } else {
     var tCutoff = allTS[allTS.length-1] - chartScale;
     var startIdx = 0;
@@ -180,18 +184,31 @@ function drawChart() {
       if (allTS[si] >= tCutoff) { startIdx = si; break; }
     }
     visTemps = allTemps.slice(startIdx);
+    visTemps2 = allTemps2.slice(startIdx);
     visSPs = allSPs.slice(startIdx);
     visTS = allTS.slice(startIdx);
   }
 
   if (visTS.length < 2) return;
 
-  var allV = visTemps.concat(visSPs);
   var yMin = Infinity, yMax = -Infinity;
-  for (var m = 0; m < allV.length; m++) {
-      if (allV[m] < yMin) yMin = allV[m];
-      if (allV[m] > yMax) yMax = allV[m];
+  for (var m = 0; m < visTemps.length; m++) {
+      if (visTemps[m] < yMin) yMin = visTemps[m];
+      if (visTemps[m] > yMax) yMax = visTemps[m];
   }
+  for (var m = 0; m < visSPs.length; m++) {
+      if (visSPs[m] < yMin) yMin = visSPs[m];
+      if (visSPs[m] > yMax) yMax = visSPs[m];
+  }
+  for (var m = 0; m < visTemps2.length; m++) {
+      if (visTemps2[m] > 0.1) { // Ignore 0 (Disconnected TC2)
+          if (visTemps2[m] < yMin) yMin = visTemps2[m];
+          if (visTemps2[m] > yMax) yMax = visTemps2[m];
+      }
+  }
+
+  if (yMin === Infinity) yMin = 0;
+  if (yMax === -Infinity) yMax = 100;
 
   var yPad = (yMax - yMin) * 0.15 + 5;
   yMin = Math.max(0, yMin - yPad); 
@@ -204,6 +221,7 @@ function drawChart() {
   function px(x) { return pad.l + (x - xMin) / xRng * cw; }
   function py(y) { return pad.t + ch - (y - yMin) / yRng * ch; }
 
+  // Draw Grids
   ctx.strokeStyle = "#1e2427"; 
   ctx.lineWidth = 1;
   for (var i = 0; i <= 5; i++) {
@@ -225,6 +243,7 @@ function drawChart() {
   ctx.save();
   ctx.beginPath(); ctx.rect(pad.l, pad.t, cw, ch); ctx.clip();
 
+  // Setpoint Line (Blue Dashed)
   ctx.strokeStyle = "#3ab0e8"; ctx.lineWidth = 1.5; ctx.setLineDash([6,4]);
   ctx.beginPath();
   for (var k = 0; k < visSPs.length; k++) {
@@ -234,6 +253,7 @@ function drawChart() {
   ctx.stroke(); 
   ctx.setLineDash([]);
 
+  // TC1 Air Area Fill
   var grad = ctx.createLinearGradient(0, pad.t, 0, pad.t+ch);
   grad.addColorStop(0, "rgba(232,144,10,0.22)");
   grad.addColorStop(1, "rgba(232,144,10,0)");
@@ -245,6 +265,7 @@ function drawChart() {
   ctx.closePath(); 
   ctx.fill();
 
+  // TC1 Air Line (Orange)
   ctx.strokeStyle = "#e8900a"; ctx.lineWidth = 2;
   ctx.beginPath();
   for (var p2 = 0; p2 < visTemps.length; p2++) {
@@ -252,15 +273,36 @@ function drawChart() {
     else ctx.lineTo(px(visTS[p2]), py(visTemps[p2]));
   }
   ctx.stroke();
+  
+  // TC2 Part Line (Green)
+  ctx.strokeStyle = "#2ecc71"; ctx.lineWidth = 2; 
+  ctx.beginPath();
+  var t2Active = false;
+  for (var p3 = 0; p3 < visTemps2.length; p3++) {
+    if (visTemps2[p3] > 0.1) {
+      if (!t2Active) { ctx.moveTo(px(visTS[p3]), py(visTemps2[p3])); t2Active = true; }
+      else { ctx.lineTo(px(visTS[p3]), py(visTemps2[p3])); }
+    } else {
+      t2Active = false; // Break line if sensor unplugs
+    }
+  }
+  ctx.stroke();
   ctx.restore();
 
+  // Legends
   ctx.fillStyle="#e8900a"; ctx.fillRect(pad.l,H-14,16,3);
   ctx.fillStyle="#d4cfc9"; ctx.font="10px 'Share Tech Mono'"; ctx.textAlign="left";
-  ctx.fillText(LANG.chart_lbl_temp, pad.l+20, H-10);
+  ctx.fillText(LANG.chart_lbl_temp || "Air", pad.l+20, H-10);
+
   ctx.strokeStyle="#3ab0e8"; ctx.lineWidth=1.5; ctx.setLineDash([4,3]);
-  ctx.beginPath(); ctx.moveTo(pad.l+68,H-12); ctx.lineTo(pad.l+84,H-12); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(pad.l+50,H-12); ctx.lineTo(pad.l+66,H-12); ctx.stroke();
   ctx.setLineDash([]); ctx.fillStyle="#d4cfc9";
-  ctx.fillText(LANG.chart_lbl_target, pad.l+88, H-10);
+  ctx.fillText(LANG.chart_lbl_target || "Target", pad.l+70, H-10);
+
+  ctx.fillStyle="#2ecc71"; ctx.fillRect(pad.l+120,H-14,16,3);
+  ctx.fillStyle="#d4cfc9"; 
+  var tc2Text = LANG.tc2_label ? LANG.tc2_label.replace(':','') : "Part";
+  ctx.fillText(tc2Text, pad.l+140, H-10);
 }
 
 // --- PROFILE LOADING ---
@@ -571,7 +613,36 @@ function pollStatus() {
 
       var wb = document.getElementById("wifi-badge");
       var rssi = d.rssi !== undefined ? parseInt(d.rssi) : -100;
-      wb.textContent = "WiFi: " + rssi + "dBm";
+
+      if (rssi === 0) {
+        wb.textContent = "WiFi: AP Mode";
+        wb.className = "wifi-badge wifi-ok";
+      } else {
+        wb.textContent = "WiFi: " + rssi + "dBm";
+        wb.className = "wifi-badge";
+        if (rssi > -60) wb.classList.add("wifi-good");
+        else if (rssi > -75) wb.classList.add("wifi-ok");
+        else wb.classList.add("wifi-bad");
+      }
+
+      var cpuB = document.getElementById("cpu-badge");
+      if (d.cpuTemp !== undefined) {
+          var ct = parseFloat(d.cpuTemp);
+          cpuB.innerHTML = "CPU: " + ct.toFixed(1) + "&deg;C";
+          
+          // Color code based on ESP32 operating temps
+          if (ct > 75) { 
+              cpuB.style.color = "var(--red)"; 
+              cpuB.style.borderColor = "var(--red)"; 
+          } else if (ct > 60) { 
+              cpuB.style.color = "var(--amb)"; 
+              cpuB.style.borderColor = "var(--amb)"; 
+          } else { 
+              cpuB.style.color = "var(--mut)"; 
+              cpuB.style.borderColor = "var(--bdr)"; 
+          }
+      }
+
       wb.className = "wifi-badge";
       if (rssi > -60) wb.classList.add("wifi-good");
       else if (rssi > -75) wb.classList.add("wifi-ok");
@@ -624,10 +695,12 @@ function pollStatus() {
       }
 
       var temp = validateNumber(d.temp, -50, 500, 0);
+      var temp2 = validateNumber(d.temp2, -50, 500, 0);
       var sp = d.setpoint ? validateNumber(d.setpoint, 0, 300, 0) : 0;
       var el = document.getElementById("curT");
       el.textContent = temp.toFixed(1);
       el.className = "tbig "+(temp>150?"hot":temp<40?"cool":"");
+     
 
       var elapsed = validateNumber(d.elapsed, 0, 86400000, 0);
       if (liveStartWall === 0) {
@@ -637,14 +710,15 @@ function pollStatus() {
         if (Math.abs(expectedLive - elapsed) > 5) {
           liveStartWall = Date.now() - (elapsed * 1000);
           if (elapsed < expectedLive && liveTS.length > 0 && elapsed < liveTS[liveTS.length-1]) {
-             liveTS =[]; liveTemps =[]; liveSPs =[];
+             liveTS =[]; liveTemps =[]; liveTemps2 =[]; liveSPs =[];
           }
         }
       }
 
       var liveNow = (Date.now() - liveStartWall) / 1000;
       if (liveTS.length === 0 || liveNow > liveTS[liveTS.length-1]) {
-         liveTemps.push(temp); 
+         liveTemps.push(temp);
+         liveTemps2.push(temp2);
          liveSPs.push(sp); 
          liveTS.push(liveNow);
          if (liveTS.length > LIVE_MAX) { liveTemps.shift(); liveSPs.shift(); liveTS.shift(); }
@@ -748,9 +822,8 @@ function pollHistory() {
     .then(buf => {
       historyPending = false;
       
-      // If empty or no points
       if (buf.byteLength < 2) {
-        histTemps =[]; histSPs = []; histTS =[];
+        histTemps =[]; histTemps2 =[]; histSPs = []; histTS =[];
         if (graphMode === "hist") drawChart();
         scheduleHistory(30000);
         return;
@@ -760,21 +833,22 @@ function pollHistory() {
       let offset = 0;
       const count = dv.getUint16(offset, true); offset += 2;
 
-      // Abort if packet was cut short somehow
-      if (buf.byteLength < 2 + (count * 6)) {
+      if (buf.byteLength < 2 + (count * 8)) {
         scheduleHistory(30000);
         return;
       }
 
       histTemps = new Array(count);
+      histTemps2 = new Array(count);
       histSPs   = new Array(count);
       histTS    = new Array(count);
 
-      // Unpack 6-byte blocks (Time, Temp, Setpoint)
+      // Unpack 8-byte blocks (Time, Temp, Temp2, Setpoint)
       for (let i = 0; i < count; i++) {
-        histTS[i]    = dv.getUint16(offset, true); offset += 2;
-        histTemps[i] = dv.getInt16(offset, true) / 10.0; offset += 2;
-        histSPs[i]   = dv.getInt16(offset, true); offset += 2;
+        histTS[i]     = dv.getUint16(offset, true); offset += 2;
+        histTemps[i]  = dv.getInt16(offset, true) / 10.0; offset += 2;
+        histTemps2[i] = dv.getInt16(offset, true) / 10.0; offset += 2; 
+        histSPs[i]    = dv.getInt16(offset, true); offset += 2;
       }
 
       if (graphMode === "hist") drawChart();
@@ -790,9 +864,10 @@ function pollHistory() {
 // --- Graph Export ---
 
 function exportChart() {
-  var visTemps = graphMode === "live" ? liveTemps : histTemps;
-  var visSPs   = graphMode === "live" ? liveSPs   : histSPs;
-  var visTS    = graphMode === "live" ? liveTS    : histTS;
+  var visTemps  = graphMode === "live" ? liveTemps : histTemps;
+  var visTemps2 = graphMode === "live" ? liveTemps2 : histTemps2;
+  var visSPs    = graphMode === "live" ? liveSPs   : histSPs;
+  var visTS     = graphMode === "live" ? liveTS    : histTS;
 
   if (visTS.length < 2) {
     alert(LANG.msg_export_err || "Not enough data to export.");
@@ -847,15 +922,12 @@ function exportChart() {
     var headerCenterY = pad.t - 30; // Centered in the 60px space above the graph
 
     if (iconImg) {
-      // Scale the 100x132 image down to 40x53 to fit exactly in the header.
-      // Sits right between the top edge (Y=0) and the graph border (Y=60).
       ctxOff.drawImage(iconImg, pad.l, pad.t - 56, 40, 53);
-      textX += 55; // Shift title right to clear the 40px wide image + 15px gap
+      textX += 55; // Shift title right to clear image
     }
     
     ctxOff.fillText(exportTitle, textX, headerCenterY);
 
-    // Dynamic legend placement trailing the title
     var titleWidth = ctxOff.measureText(exportTitle).width;
     var legendX = textX + titleWidth + 40;
 
@@ -865,13 +937,30 @@ function exportChart() {
     ctxOff.fillStyle = "#3498db";
     ctxOff.fillRect(legendX, headerCenterY - 3, 30, 6);
     ctxOff.fillStyle = "#34495e";
-    ctxOff.fillText("Temperature", legendX + 40, headerCenterY);
+    ctxOff.fillText("Air Temp", legendX + 40, headerCenterY);
     
     // Setpoint Legend
     ctxOff.fillStyle = "#e74c3c";
-    ctxOff.fillRect(legendX + 160, headerCenterY - 3, 30, 6);
+    ctxOff.fillRect(legendX + 130, headerCenterY - 3, 30, 6);
     ctxOff.fillStyle = "#34495e";
-    ctxOff.fillText("Setpoint", legendX + 200, headerCenterY);
+    ctxOff.fillText("Setpoint", legendX + 170, headerCenterY);
+
+    // Part Legend
+    ctxOff.fillStyle = "#2ecc71";
+    ctxOff.fillRect(legendX + 260, headerCenterY - 3, 30, 6);
+    ctxOff.fillStyle = "#34495e";
+    ctxOff.fillText("Part Temp", legendX + 300, headerCenterY);
+
+    // --- ADDED: PID Settings Overlay ---
+    var kp = document.getElementById("pidKp").value || "--";
+    var ki = document.getElementById("pidKi").value || "--";
+    var kd = document.getElementById("pidKd").value || "--";
+    var pidText = "PID: P=" + kp + "  I=" + ki + "  D=" + kd;
+
+    ctxOff.textAlign = "right";
+    ctxOff.fillStyle = "#7f8c8d";
+    ctxOff.font = "italic 16px Arial, sans-serif";
+    ctxOff.fillText(pidText, W - pad.r, headerCenterY);
 
     // --- Y-Axis ---
     ctxOff.strokeStyle = "#ecf0f1";
@@ -892,18 +981,25 @@ function exportChart() {
       ctxOff.fillText(Math.round(yv), pad.l - 15, yp);
     }
 
-    // --- X-Axis ---
+    // --- X-Axis (UPDATED to hh:mm:ss format) ---
     var xSteps = 12;
     ctxOff.textAlign = "center";
     ctxOff.textBaseline = "top";
     for (var j = 0; j <= xSteps; j++) {
-      var xv = xMin + (xRng / xSteps) * j;
+      var xv = Math.max(0, Math.round(xMin + (xRng / xSteps) * j));
       var xp = px(xv);
+      
+      // Calculate HH:MM:SS
+      var h = Math.floor(xv / 3600);
+      var m = Math.floor((xv % 3600) / 60);
+      var s = xv % 60;
+      var timeStr = ("0" + h).slice(-2) + ":" + ("0" + m).slice(-2) + ":" + ("0" + s).slice(-2);
+      
       ctxOff.beginPath();
       ctxOff.moveTo(xp, pad.t);
       ctxOff.lineTo(xp, pad.t + ch);
       ctxOff.stroke();
-      ctxOff.fillText(Math.round(xv), xp, pad.t + ch + 15);
+      ctxOff.fillText(timeStr, xp, pad.t + ch + 15);
     }
 
     // Chart Border
@@ -911,7 +1007,7 @@ function exportChart() {
     ctxOff.lineWidth = 1.5;
     ctxOff.strokeRect(pad.l, pad.t, cw, ch);
 
-    // Axis Labels
+    // Axis Labels (UPDATED Label to Time (hh:mm:ss))
     ctxOff.fillStyle = "#2c3e50";
     ctxOff.font = "italic 16px Arial, sans-serif";
     ctxOff.textAlign = "center";
@@ -920,7 +1016,7 @@ function exportChart() {
     ctxOff.rotate(-Math.PI / 2);
     ctxOff.fillText("Temps (\u00B0C)", 0, 0); 
     ctxOff.restore();
-    ctxOff.fillText("Time (s)", pad.l + cw / 2, pad.t + ch + 45);
+    ctxOff.fillText("Time (hh:mm:ss)", pad.l + cw / 2, pad.t + ch + 45);
 
     // --- Line Drawing ---
     // Setpoints
@@ -941,6 +1037,22 @@ function exportChart() {
     for (var n = 0; n < visTemps.length; n++) {
       if (n === 0) ctxOff.moveTo(px(visTS[n]), py(visTemps[n]));
       else ctxOff.lineTo(px(visTS[n]), py(visTemps[n]));
+    }
+    ctxOff.stroke();
+
+    // Part Temperatures (TC2)
+    ctxOff.strokeStyle = "#2ecc71";
+    ctxOff.lineWidth = 3;
+    ctxOff.lineJoin = "round";
+    ctxOff.beginPath();
+    var t2ExpActive = false;
+    for (var n = 0; n < visTemps2.length; n++) {
+      if (visTemps2[n] > 0.1) {
+        if (!t2ExpActive) { ctxOff.moveTo(px(visTS[n]), py(visTemps2[n])); t2ExpActive = true; }
+        else { ctxOff.lineTo(px(visTS[n]), py(visTemps2[n])); }
+      } else {
+        t2ExpActive = false;
+      }
     }
     ctxOff.stroke();
 

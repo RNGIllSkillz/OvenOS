@@ -16,6 +16,7 @@ struct Profile {
 
 struct HistoryBuffer {
   int16_t temps[HIST_SIZE];
+  int16_t temps2[HIST_SIZE];
   int16_t sps[HIST_SIZE];
   uint16_t ts_offsets[HIST_SIZE];
   volatile int head;

@@ -13,8 +13,8 @@ void onDeadmanTimer(void* arg) {
     if ((millis() - ssrDeadmanKick) > SSR_DEADMAN_MS) {
         portENTER_CRITICAL(&ssrmux);
         digitalWrite(PIN_SSR, LOW);
-        digitalWrite(PIN_FAN, LOW);
-        fanState = false;
+        digitalWrite(PIN_FAN, HIGH);
+        fanState = true;   
         emergencyStopped = true; 
         portEXIT_CRITICAL(&ssrmux);
     }
@@ -23,8 +23,6 @@ void onDeadmanTimer(void* arg) {
 void emergencyStop(const char* reason) {
     portENTER_CRITICAL(&ssrmux);
     digitalWrite(PIN_SSR, LOW);
-    digitalWrite(PIN_FAN, LOW);
-    fanState = false;
     emergencyStopped = true;
     portEXIT_CRITICAL(&ssrmux);
     
@@ -47,8 +45,6 @@ void emergencyStop(const char* reason) {
 void stopReflow() {
     portENTER_CRITICAL(&ssrmux);
     digitalWrite(PIN_SSR, LOW);
-    digitalWrite(PIN_FAN, LOW);
-    fanState = false;
     portEXIT_CRITICAL(&ssrmux);
 
     if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(200)) == pdTRUE) {
@@ -221,7 +217,38 @@ void updateThermocouple() {
     }
 }
 
+void manageFan() {
+    bool autoFan = false;
+    
+    // Grab a quick thread-safe reading of the oven air temperature (TC1)
+    if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(50)) == pdTRUE) {
+        
+        // Rule 1: Fail-safe. If thermocouple is failing, reading 0 or disconnected -> Fan ON
+        if (tcFailCount > 0 || isnan(Input) || Input <= 0.01) {
+            autoFan = true;
+        } 
+        // Rule 2: Oven internal temp > 50C -> Fan ON
+        else if (Input > 50.0 || temperatureRead() > 55.0) {
+            autoFan = true;
+        } 
+        // Rule 3: Temp <= 50C -> Fan OFF
+        else {
+            autoFan = false;
+        }
+
+        // Apply state if it needs to change
+        if (fanState != autoFan) {
+            fanState = autoFan;
+            portENTER_CRITICAL(&ssrmux);
+            digitalWrite(PIN_FAN, autoFan ? HIGH : LOW);
+            portEXIT_CRITICAL(&ssrmux);
+        }
+        xSemaphoreGive(dataMutex);
+    }
+}
+
 void runControlLoop() {
+    manageFan();
     uint32_t now = millis();
 
     double snapSP, snapInput, snapInput2, snapStepStart, snapPeak;
@@ -271,7 +298,8 @@ void runControlLoop() {
                     xSemaphoreGive(dataMutex);
                 }
             }
-            if (snapInput < snapSP && snapPeak > 40 && snapInput < (snapPeak - 15.0)) {
+            double effectivePeak = (snapPeak > snapSP) ? snapSP : snapPeak;
+            if (snapInput < snapSP && snapPeak > 40 && snapInput < (effectivePeak - 15.0)) {
                 emergencyStop(L_ERR_DROP); return;
             }
         }        
@@ -288,6 +316,7 @@ void runControlLoop() {
         if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(50)) == pdTRUE) {
             int idx = history.head;
             history.temps[idx] = (int16_t)round(Input * 10.0);
+            history.temps2[idx] = (int16_t)round(Input2 * 10.0);
             history.sps[idx] = (int16_t)round(Setpoint);
             uint32_t elapsed = (now >= runStart) ? (now - runStart) / 1000 : 0;
             if (elapsed > 65535) elapsed = 65535;
@@ -309,7 +338,11 @@ void runControlLoop() {
     }
 
     if (!snapTimerActive) {
-        if (heatStartTime == 0) heatStartTime = now;
+        if (heatStartTime == 0) heatStartTime = now;        
+        if (snapInput >= (snapSP - 10.0)) {
+            heatStartTime = now; 
+        }
+
         if (now - heatStartTime > HEAT_TIMEOUT_MS) { emergencyStop(L_ERR_TIMEOUT); return; }
     }
 
@@ -367,8 +400,12 @@ void runControlLoop() {
                 }
             }
         } else {
-            stabStart = 0;
+            if (stabStart != 0 && (now - stabStart > 2000)) {
+                stabStart = now - 2000; // Penalize the timer, but don't reset to 0 completely
+            } else {
+                stabStart = 0; 
         }
+}
     } else {
         if ((now - procStart)/1000 >= snapHold*60) {
             if (profMode) {
@@ -380,8 +417,6 @@ void runControlLoop() {
                         running = false; finished = true; profMode = false; 
                         portENTER_CRITICAL(&ssrmux);
                         digitalWrite(PIN_SSR, LOW); 
-                        digitalWrite(PIN_FAN, LOW);
-                        fanState = false;
                         portEXIT_CRITICAL(&ssrmux);
                         strncpy(statusMsg, L_STATE_DONE, sizeof(statusMsg) - 1);
                         statusMsg[sizeof(statusMsg) - 1] = '\0';
@@ -394,8 +429,6 @@ void runControlLoop() {
                     running = false; finished = true; 
                     portENTER_CRITICAL(&ssrmux);
                     digitalWrite(PIN_SSR, LOW);
-                    digitalWrite(PIN_FAN, LOW);
-                    fanState = false;
                     portEXIT_CRITICAL(&ssrmux);
                     strncpy(statusMsg, L_STATE_END, sizeof(statusMsg) - 1);
                     statusMsg[sizeof(statusMsg) - 1] = '\0';

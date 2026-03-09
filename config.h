@@ -21,7 +21,7 @@ const int PIN_FAN     = 27;
 extern double PID_KP;
 extern double PID_KI;
 extern double PID_KD;
-const int PID_WINDOW_SIZE = 100;
+const int PID_WINDOW_SIZE = 250;
 
 // SAFETY SETTINGS
 const double        STABLE_TOLERANCE     = 2.0;    // Deg C
