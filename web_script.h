@@ -24,7 +24,6 @@ var canvas = document.getElementById("chart");
 var ctx = canvas.getContext("2d");
 var isSettingsOpen = false; 
 
-// --- LOCALIZATION LOGIC ---
 function changeLang() {
   var sel = document.getElementById("langSel");
   localStorage.setItem("oven_lang", sel.value);
@@ -44,8 +43,6 @@ function initI18n() {
   });
   if (LANG) document.title = LANG.title;
 }
-
-// --- HELPER FUNCTIONS ---
 
 function validateNumber(val, min, max, def) {
   var n = parseFloat(val);
@@ -83,8 +80,6 @@ function addLog(msg, cls) {
   log.insertBefore(el, log.firstChild);
   while (log.children.length > 50) log.removeChild(log.lastChild);
 }
-
-// --- CHARTING ---
 
 function setScale(sec) {
   chartScale = validateNumber(sec, 0, 86400, 600);
@@ -201,7 +196,7 @@ function drawChart() {
       if (visSPs[m] > yMax) yMax = visSPs[m];
   }
   for (var m = 0; m < visTemps2.length; m++) {
-      if (visTemps2[m] > 0.1) { // Ignore 0 (Disconnected TC2)
+      if (visTemps2[m] > 0.1) {
           if (visTemps2[m] < yMin) yMin = visTemps2[m];
           if (visTemps2[m] > yMax) yMax = visTemps2[m];
       }
@@ -221,7 +216,7 @@ function drawChart() {
   function px(x) { return pad.l + (x - xMin) / xRng * cw; }
   function py(y) { return pad.t + ch - (y - yMin) / yRng * ch; }
 
-  // Draw Grids
+  // Grids
   ctx.strokeStyle = "#1e2427"; 
   ctx.lineWidth = 1;
   for (var i = 0; i <= 5; i++) {
@@ -243,7 +238,7 @@ function drawChart() {
   ctx.save();
   ctx.beginPath(); ctx.rect(pad.l, pad.t, cw, ch); ctx.clip();
 
-  // Setpoint Line (Blue Dashed)
+  // Setpoint Line
   ctx.strokeStyle = "#3ab0e8"; ctx.lineWidth = 1.5; ctx.setLineDash([6,4]);
   ctx.beginPath();
   for (var k = 0; k < visSPs.length; k++) {
@@ -253,7 +248,7 @@ function drawChart() {
   ctx.stroke(); 
   ctx.setLineDash([]);
 
-  // TC1 Air Area Fill
+  // TC1 Air Fill
   var grad = ctx.createLinearGradient(0, pad.t, 0, pad.t+ch);
   grad.addColorStop(0, "rgba(232,144,10,0.22)");
   grad.addColorStop(1, "rgba(232,144,10,0)");
@@ -265,7 +260,7 @@ function drawChart() {
   ctx.closePath(); 
   ctx.fill();
 
-  // TC1 Air Line (Orange)
+  // TC1 Air Line
   ctx.strokeStyle = "#e8900a"; ctx.lineWidth = 2;
   ctx.beginPath();
   for (var p2 = 0; p2 < visTemps.length; p2++) {
@@ -274,7 +269,7 @@ function drawChart() {
   }
   ctx.stroke();
   
-  // TC2 Part Line (Green)
+  // TC2 Part Line
   ctx.strokeStyle = "#2ecc71"; ctx.lineWidth = 2; 
   ctx.beginPath();
   var t2Active = false;
@@ -283,7 +278,7 @@ function drawChart() {
       if (!t2Active) { ctx.moveTo(px(visTS[p3]), py(visTemps2[p3])); t2Active = true; }
       else { ctx.lineTo(px(visTS[p3]), py(visTemps2[p3])); }
     } else {
-      t2Active = false; // Break line if sensor unplugs
+      t2Active = false;
     }
   }
   ctx.stroke();
@@ -304,8 +299,6 @@ function drawChart() {
   var tc2Text = LANG.tc2_label ? LANG.tc2_label.replace(':','') : "Part";
   ctx.fillText(tc2Text, pad.l+140, H-10);
 }
-
-// --- PROFILE LOADING ---
 
 function loadProfiles() {
   var sel = document.getElementById("profSel");
@@ -349,8 +342,6 @@ function renderPreview() {
   }
   document.getElementById("profPreview").innerHTML = h;
 }
-
-// --- UI INTERACTION ---
 
 function toggleSettings() {
   isSettingsOpen = !isSettingsOpen;
@@ -425,8 +416,6 @@ function getCustomSteps() {
   return steps;
 }
 
-// --- COMMANDS ---
-
 function setRunning(r) {
   if (!isSettingsOpen) {
       document.getElementById("btnStart").disabled = !!r;
@@ -437,8 +426,8 @@ function doStart() {
   var fd = new FormData();
   
   setRunning(true);
-  histTemps =[]; histSPs =[]; histTS =[];
-  liveTemps =[]; liveSPs =[]; liveTS =[];
+  histTemps =[]; histTemps2 =[]; histSPs =[]; histTS =[];
+  liveTemps =[]; liveTemps2 =[]; liveSPs =[]; liveTS =[];
   liveStartWall = 0;
   drawChart();
 
@@ -512,6 +501,10 @@ function savePID() {
   fd.append("kp", document.getElementById("pidKp").value);
   fd.append("ki", document.getElementById("pidKi").value);
   fd.append("kd", document.getElementById("pidKd").value);
+  fd.append("kpOut", document.getElementById("pidKpOut").value);
+  fd.append("kiOut", document.getElementById("pidKiOut").value);
+  fd.append("kdOut", document.getElementById("pidKdOut").value);
+  fd.append("cascade", document.getElementById("chkCascade").checked ? "1" : "0");
   
   fetch("/setpid", {method:"POST", headers:{"X-Oven-Auth":"1"}, body:fd})
     .then(r => {
@@ -536,8 +529,6 @@ function doReset() {
   fetch("/reset",{method:"POST", headers:{"X-Oven-Auth":"1"}})
   .then(r => { if(r.ok) addLog(LANG.msg_reset_ok, "success"); else addLog(LANG.msg_reset_err, "err"); });
 }
-
-// --- POLLING ---
 
 var failCount = 0;
 function scheduleStatus(delay) {
@@ -565,8 +556,6 @@ function toggleFan() {
                 btn.style.borderColor = "var(--bdr)";
                 btn.style.color = "var(--mut)";
             }
-        } else {
-            console.error("Fan toggle failed");
         }
     });
 }
@@ -584,7 +573,7 @@ function toggleMonitor() {
         if(r.ok) {
             if(newState==="1") {
                 addLog(LANG.msg_mon_start, "ev");
-                histTemps=[]; histSPs=[]; histTS=[]; liveTemps=[]; liveSPs=[]; liveTS=[];
+                histTemps=[]; histTemps2=[]; histSPs=[]; histTS=[]; liveTemps=[]; liveTemps2=[]; liveSPs=[]; liveTS=[];
                 liveStartWall = 0; 
             } else {
                 addLog(LANG.msg_mon_stop, "ev");
@@ -629,8 +618,6 @@ function pollStatus() {
       if (d.cpuTemp !== undefined) {
           var ct = parseFloat(d.cpuTemp);
           cpuB.innerHTML = "CPU: " + ct.toFixed(1) + "&deg;C";
-          
-          // Color code based on ESP32 operating temps
           if (ct > 75) { 
               cpuB.style.color = "var(--red)"; 
               cpuB.style.borderColor = "var(--red)"; 
@@ -642,11 +629,6 @@ function pollStatus() {
               cpuB.style.borderColor = "var(--bdr)"; 
           }
       }
-
-      wb.className = "wifi-badge";
-      if (rssi > -60) wb.classList.add("wifi-good");
-      else if (rssi > -75) wb.classList.add("wifi-ok");
-      else wb.classList.add("wifi-bad");
 
       if (d.running) { btnGear.disabled = true; if(isSettingsOpen) toggleSettings(); } 
       else { btnGear.disabled = false; }
@@ -672,7 +654,6 @@ function pollStatus() {
       }
       btnMon.disabled = d.running;
 
-      // Handle FAN State visually
       var btnFan = document.getElementById("btnFan");
       if (d.fan) {
           btnFan.classList.add("fan-active");
@@ -684,7 +665,6 @@ function pollStatus() {
           btnFan.style.color = "var(--mut)";
       }
 
-      // Handle TC2 Board Temp Visibility
       var tc2Div = document.getElementById("tc2Div");
       if (d.hasTC2) {
           tc2Div.style.display = "block";
@@ -700,7 +680,6 @@ function pollStatus() {
       var el = document.getElementById("curT");
       el.textContent = temp.toFixed(1);
       el.className = "tbig "+(temp>150?"hot":temp<40?"cool":"");
-     
 
       var elapsed = validateNumber(d.elapsed, 0, 86400000, 0);
       if (liveStartWall === 0) {
@@ -721,17 +700,33 @@ function pollStatus() {
          liveTemps2.push(temp2);
          liveSPs.push(sp); 
          liveTS.push(liveNow);
-         if (liveTS.length > LIVE_MAX) { liveTemps.shift(); liveSPs.shift(); liveTS.shift(); }
+         if (liveTS.length > LIVE_MAX) { liveTemps.shift(); liveTemps2.shift(); liveSPs.shift(); liveTS.shift(); }
          if (graphMode === "live") drawChart();
       }
 
-      document.getElementById("spV").textContent = sp ? sp.toFixed(0) : LANG.target_idle;
+      // Explicitly adjust Target UI label so users know which sensor determines SP
+      var tPref = document.querySelector('[data-i18n="target_prefix"]');
+      if (tPref) {
+          var prefixText = LANG.target_prefix || "Target &nbsp;";
+          prefixText = prefixText.replace(/&nbsp;/g, "").trim();
+          if (d.cascade && d.hasTC2) {
+              tPref.innerHTML = prefixText + " <span style='font-size:0.7em;'>(Part)</span> &nbsp;";
+          } else {
+              tPref.innerHTML = prefixText + " <span style='font-size:0.7em;'>(Air)</span> &nbsp;";
+          }
+      }
 
-      // Translate the Backend C++ Response Key into User's Language
+      // Display Cascade Info if active
+      var spStr = sp ? sp.toFixed(0) : LANG.target_idle;
+      if (d.cascade && d.hasTC2 && sp) {
+          var airT = validateNumber(d.airTarget, 0, 300, 0);
+          spStr += " <span style='font-size:0.75em; color:var(--mut)'>(" + (LANG.air_target || "Air:") + " " + airT.toFixed(0) + "&deg;)</span>";
+      }
+      document.getElementById("spV").innerHTML = spStr;
+
       var rawMsg = String(d.msg || "UNKNOWN");
       var translatedMsg = (LANG.backend && LANG.backend[rawMsg]) ? LANG.backend[rawMsg] : rawMsg;
 
-      // Handle custom trailing Alarm messages
       if (rawMsg.startsWith("ALARM: ")) {
           var reason = rawMsg.substring(7);
           var translatedReason = (LANG.backend && LANG.backend[reason]) ? LANG.backend[reason] : reason;
@@ -743,7 +738,6 @@ function pollStatus() {
       pill.textContent = translatedMsg; 
       pill.className = "pill";
       
-      // Dynamic translation-safe color logic evaluates ENGLISH RAW strings only
       if (rawMsg.startsWith("ALARM:") || rawMsg === "STOPPED") {
           pill.classList.add("err");
       } else if (rawMsg === "HOLD" || rawMsg === "DONE" || rawMsg === "END") {
@@ -791,17 +785,27 @@ function pollStatus() {
         addLog(LANG.msg_state + translatedMsg, logCls); prevMsg = rawMsg; 
       }
       
-      if (d.kp !== undefined && !isSettingsOpen) {
-         document.getElementById("pidKp").value = d.kp;
-         document.getElementById("pidKi").value = d.ki;
-         document.getElementById("pidKd").value = d.kd;
+      if (!isSettingsOpen) {
+         if (d.kp !== undefined) document.getElementById("pidKp").value = d.kp;
+         if (d.ki !== undefined) document.getElementById("pidKi").value = d.ki;
+         if (d.kd !== undefined) document.getElementById("pidKd").value = d.kd;
+         if (d.kpOut !== undefined) document.getElementById("pidKpOut").value = d.kpOut;
+         if (d.kiOut !== undefined) document.getElementById("pidKiOut").value = d.kiOut;
+         if (d.kdOut !== undefined) document.getElementById("pidKdOut").value = d.kdOut;
+         
+         if (d.cascade !== undefined) {
+             document.getElementById("chkCascade").checked = d.cascade;
+             var op = d.cascade ? "1" : "0.4";
+             document.getElementById("outerPidGrp").style.opacity = op;
+             var lbl = document.getElementById("outerPidLabel");
+             if(lbl) lbl.style.opacity = op;
+         }
       }
       
       var elapsedDraw = Date.now() - t0;
       scheduleStatus(elapsedDraw > 800 ? 3000 : 2000);
     })
     .catch((e) => {
-      console.error("Status Poll Error:", e);
       statusPending = false; failCount++;
       if (failCount > 3) { document.getElementById("badge").textContent = LANG.msg_dead; document.getElementById("badge").className = ""; }
       scheduleStatus(3000); 
@@ -843,7 +847,6 @@ function pollHistory() {
       histSPs   = new Array(count);
       histTS    = new Array(count);
 
-      // Unpack 8-byte blocks (Time, Temp, Temp2, Setpoint)
       for (let i = 0; i < count; i++) {
         histTS[i]     = dv.getUint16(offset, true); offset += 2;
         histTemps[i]  = dv.getInt16(offset, true) / 10.0; offset += 2;
@@ -855,13 +858,10 @@ function pollHistory() {
       scheduleHistory(30000);
     })
     .catch((e) => { 
-      console.error("History Poll Error:", e);
       historyPending = false; 
       scheduleHistory(30000); 
     });
 }
-
-// --- Graph Export ---
 
 function exportChart() {
   var visTemps  = graphMode === "live" ? liveTemps : histTemps;
@@ -874,10 +874,9 @@ function exportChart() {
     return;
   }
 
-  // Asynchronously load the Favicon before rendering the chart
   var img = new Image();
   img.onload = function() { renderAndDownload(img); };
-  img.onerror = function() { renderAndDownload(null); }; // Fallback if image fails
+  img.onerror = function() { renderAndDownload(null); }; 
   img.src = "/favicon.ico";
 
   function renderAndDownload(iconImg) {
@@ -891,7 +890,6 @@ function exportChart() {
     ctxOff.fillStyle = "#ffffff";
     ctxOff.fillRect(0, 0, W, H);
 
-    // Keep the original padding so the graph is full size
     var pad = { t: 60, r: 40, b: 70, l: 80 };
     var cw = W - pad.l - pad.r;
     var ch = H - pad.t - pad.b;
@@ -911,7 +909,6 @@ function exportChart() {
     function px(x) { return pad.l + ((x - xMin) / xRng) * cw; }
     function py(y) { return pad.t + ch - ((y - yMin) / yRng) * ch; }
 
-    // --- Header & Legend Rendering ---
     ctxOff.fillStyle = "#2c3e50";
     ctxOff.font = "bold 28px Arial, sans-serif";
     ctxOff.textAlign = "left";
@@ -919,11 +916,11 @@ function exportChart() {
     
     var exportTitle = (LANG && LANG.title) ? LANG.title : "ReflowOven";
     var textX = pad.l;
-    var headerCenterY = pad.t - 30; // Centered in the 60px space above the graph
+    var headerCenterY = pad.t - 30;
 
     if (iconImg) {
       ctxOff.drawImage(iconImg, pad.l, pad.t - 56, 40, 53);
-      textX += 55; // Shift title right to clear image
+      textX += 55;
     }
     
     ctxOff.fillText(exportTitle, textX, headerCenterY);
@@ -933,25 +930,21 @@ function exportChart() {
 
     ctxOff.font = "16px Arial, sans-serif";
     
-    // Temperature Legend
     ctxOff.fillStyle = "#3498db";
     ctxOff.fillRect(legendX, headerCenterY - 3, 30, 6);
     ctxOff.fillStyle = "#34495e";
     ctxOff.fillText("Air Temp", legendX + 40, headerCenterY);
     
-    // Setpoint Legend
     ctxOff.fillStyle = "#e74c3c";
     ctxOff.fillRect(legendX + 130, headerCenterY - 3, 30, 6);
     ctxOff.fillStyle = "#34495e";
     ctxOff.fillText("Setpoint", legendX + 170, headerCenterY);
 
-    // Part Legend
     ctxOff.fillStyle = "#2ecc71";
     ctxOff.fillRect(legendX + 260, headerCenterY - 3, 30, 6);
     ctxOff.fillStyle = "#34495e";
     ctxOff.fillText("Part Temp", legendX + 300, headerCenterY);
 
-    // --- ADDED: PID Settings Overlay ---
     var kp = document.getElementById("pidKp").value || "--";
     var ki = document.getElementById("pidKi").value || "--";
     var kd = document.getElementById("pidKd").value || "--";
@@ -962,7 +955,6 @@ function exportChart() {
     ctxOff.font = "italic 16px Arial, sans-serif";
     ctxOff.fillText(pidText, W - pad.r, headerCenterY);
 
-    // --- Y-Axis ---
     ctxOff.strokeStyle = "#ecf0f1";
     ctxOff.lineWidth = 1;
     ctxOff.fillStyle = "#7f8c8d";
@@ -981,7 +973,6 @@ function exportChart() {
       ctxOff.fillText(Math.round(yv), pad.l - 15, yp);
     }
 
-    // --- X-Axis (UPDATED to hh:mm:ss format) ---
     var xSteps = 12;
     ctxOff.textAlign = "center";
     ctxOff.textBaseline = "top";
@@ -989,7 +980,6 @@ function exportChart() {
       var xv = Math.max(0, Math.round(xMin + (xRng / xSteps) * j));
       var xp = px(xv);
       
-      // Calculate HH:MM:SS
       var h = Math.floor(xv / 3600);
       var m = Math.floor((xv % 3600) / 60);
       var s = xv % 60;
@@ -1002,12 +992,10 @@ function exportChart() {
       ctxOff.fillText(timeStr, xp, pad.t + ch + 15);
     }
 
-    // Chart Border
     ctxOff.strokeStyle = "#bdc3c7";
     ctxOff.lineWidth = 1.5;
     ctxOff.strokeRect(pad.l, pad.t, cw, ch);
 
-    // Axis Labels (UPDATED Label to Time (hh:mm:ss))
     ctxOff.fillStyle = "#2c3e50";
     ctxOff.font = "italic 16px Arial, sans-serif";
     ctxOff.textAlign = "center";
@@ -1018,8 +1006,6 @@ function exportChart() {
     ctxOff.restore();
     ctxOff.fillText("Time (hh:mm:ss)", pad.l + cw / 2, pad.t + ch + 45);
 
-    // --- Line Drawing ---
-    // Setpoints
     ctxOff.strokeStyle = "#e74c3c";
     ctxOff.lineWidth = 3;
     ctxOff.beginPath();
@@ -1029,7 +1015,6 @@ function exportChart() {
     }
     ctxOff.stroke();
 
-    // Actual Temperatures
     ctxOff.strokeStyle = "#3498db";
     ctxOff.lineWidth = 3;
     ctxOff.lineJoin = "round";
@@ -1040,7 +1025,6 @@ function exportChart() {
     }
     ctxOff.stroke();
 
-    // Part Temperatures (TC2)
     ctxOff.strokeStyle = "#2ecc71";
     ctxOff.lineWidth = 3;
     ctxOff.lineJoin = "round";
@@ -1056,7 +1040,6 @@ function exportChart() {
     }
     ctxOff.stroke();
 
-    // --- Download Handling ---
     if (offCanvas.toBlob) {
       offCanvas.toBlob(function(blob) {
         var url = URL.createObjectURL(blob);
@@ -1084,7 +1067,14 @@ function exportChart() {
   }
 }
 
-// --- INITIALIZATION ---
+// Bind Cascade toggle dimming
+document.getElementById("chkCascade").addEventListener("change", function() {
+    var op = this.checked ? "1" : "0.4";
+    document.getElementById("outerPidGrp").style.opacity = op;
+    var lbl = document.getElementById("outerPidLabel");
+    if(lbl) lbl.style.opacity = op;
+});
+
 initI18n();
 window.addEventListener("resize", drawChart);
 scheduleStatus(1000);

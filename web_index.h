@@ -36,7 +36,6 @@ const char PAGE_HTML[] PROGMEM = R"rawliteral(
       <div class="plabel" data-i18n="temp_label">Temperature</div>
       <div><span id="curT" class="tbig">---</span><span class="tunit">&deg;C</span></div>
       
-      <!-- ADDED TC2 DISPLAY (Hidden if TC2 is not detected) -->
       <div id="tc2Div" style="display:none; margin-top: 4px; font-family: var(--mono); color: var(--amb2); font-size: 1.1rem;">
         <span data-i18n="tc2_label">Part:</span> <span id="curT2">---</span>&deg;C
       </div>
@@ -44,7 +43,6 @@ const char PAGE_HTML[] PROGMEM = R"rawliteral(
       <div class="sprow"><span data-i18n="target_prefix">Target &nbsp;</span><span id="spV" data-i18n="target_idle">---</span> &deg;C</div>
       <div><span id="pill" class="pill" data-i18n="pill_idle">Idle</span></div>
       
-      <!-- ADDED FAN BUTTON -->
       <div style="display:flex; justify-content:center; gap:8px; margin-top:12px;">
         <button id="btnMon" class="btn bsm" style="flex:1; background:#1e2427; border:1px solid var(--bdr); color:var(--mut);" onclick="toggleMonitor()" data-i18n="btn_monitor">
           &#128200; MONITOR
@@ -120,27 +118,40 @@ const char PAGE_HTML[] PROGMEM = R"rawliteral(
 
       <!-- SETTINGS PANE (HIDDEN) -->
       <div id="settingsPane">
-         <div class="frow">
-            <span class="flabel">Kp (Proportional)</span>
-            <input type="number" id="pidKp" step="0.1">
-          </div>
-          <div class="frow">
-            <span class="flabel">Ki (Integral)</span>
-            <input type="number" id="pidKi" step="0.01">
-          </div>
-          <div class="frow">
-            <span class="flabel">Kd (Derivative)</span>
-            <input type="number" id="pidKd" step="0.01">
-          </div>
-          <div class="btnrow">
-            <button class="btn bcustom" onclick="savePID()" data-i18n="btn_save_pid">SAVE PID</button>
+         <div class="frow" style="border-bottom: 1px solid var(--bdr); padding-bottom: 8px; margin-bottom: 12px;">
+            <label style="display:flex; align-items:center; gap:8px; cursor:pointer; font-size: 0.8rem; color: var(--txt);">
+              <input type="checkbox" id="chkCascade" style="width:16px; height:16px;">
+              <span data-i18n="lbl_cascade">Use Cascade Control (Requires TC2)</span>
+            </label>
+         </div>
+
+
+         <div style="display:grid; grid-template-columns: 1fr 1fr; gap:0 15px;">
+            <div class="plabel" data-i18n="lbl_pid_inner">Air PID (Inner)</div>
+            <div class="plabel" id="outerPidLabel" data-i18n="lbl_pid_outer" style="transition: opacity 0.3s;">Part PID (Outer)</div>
+            
+            <div>
+              <div class="frow"><span class="flabel">Kp</span><input type="number" id="pidKp" step="0.1" style="width:75px;"></div>
+              <div class="frow"><span class="flabel">Ki</span><input type="number" id="pidKi" step="0.01" style="width:75px;"></div>
+              <div class="frow"><span class="flabel">Kd</span><input type="number" id="pidKd" step="0.01" style="width:75px;"></div>
+            </div>
+            <div id="outerPidGrp" style="transition: opacity 0.3s;">
+              <div class="frow"><span class="flabel">Kp</span><input type="number" id="pidKpOut" step="0.1" style="width:75px;"></div>
+              <div class="frow"><span class="flabel">Ki</span><input type="number" id="pidKiOut" step="0.001" style="width:75px;"></div>
+              <div class="frow"><span class="flabel">Kd</span><input type="number" id="pidKdOut" step="0.01" style="width:75px;"></div>
+            </div>
+         </div>
+
+         
+         <div class="btnrow">
+            <button class="btn bcustom" onclick="savePID()" data-i18n="btn_save_pid">SAVE SETTINGS</button>
             <button class="btn bcustom" onclick="toggleSettings()" style="border-color:var(--bdr); color:var(--mut)" data-i18n="btn_back">BACK</button>
-          </div>
+         </div>
       </div>
 
     </div>
 
-    <!-- ADDED LOGO PANE (Bottom Left) -->
+    <!-- LOGO PANE -->
     <div class="logo-pane">
       <img src="/favicon.ico" alt="Logo">
     </div>

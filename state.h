@@ -9,12 +9,14 @@
 extern MAX6675 thermocouple;
 extern MAX6675 thermocouple2;
 extern PID myPID;
+extern PID outerPID;
 extern AsyncWebServer server; 
 extern portMUX_TYPE ssrmux;
 extern SemaphoreHandle_t dataMutex;
 
 // PID Variables
 extern double Setpoint, Input, Output;
+extern double CascadeDelta;
 extern uint32_t windowStartTime;
 
 // Secondary Sensor & Fan State
@@ -38,6 +40,8 @@ extern volatile bool tcVerifyPending;
 // Safety State
 extern double currentStepPeak; 
 extern double stepStartTemp;
+extern double currentStepPeak2; 
+extern double stepStartTemp2;
 
 // Profile State
 extern const Profile* activeProfilePtr;

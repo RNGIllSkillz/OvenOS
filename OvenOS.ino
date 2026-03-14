@@ -1,5 +1,5 @@
 // ============================================================
-//  IllOvenOS v3.1
+//  IllOvenOS v3.2
 // ============================================================
 #include <WiFi.h>
 #include <esp_wifi.h>
@@ -21,12 +21,20 @@ double PID_KP = 80.0;
 double PID_KI = 0.4;
 double PID_KD = 1.5;
 
+// Cascade Default Tuning (Slow responding)
+double PID_OUTER_KP = 1.5;
+double PID_OUTER_KI = 0.05;
+double PID_OUTER_KD = 0.0;
+bool cascadeMode = false;
+
 MAX6675 thermocouple(PIN_TC_CLK, PIN_TC_CS, PIN_TC_DO);
 MAX6675 thermocouple2(PIN_TC_CLK, PIN_TC2_CS, PIN_TC_DO);
 double Setpoint = 0, Input = 25, Output = 0;
 double Input2 = 0;
+double CascadeDelta = 0; // Outer PID output (Delta target applied to Air)
 
 PID myPID(&Input, &Output, &Setpoint, PID_KP, PID_KI, PID_KD, DIRECT);
+PID outerPID(&Input2, &CascadeDelta, &Setpoint, PID_OUTER_KP, PID_OUTER_KI, PID_OUTER_KD, DIRECT);
 
 AsyncWebServer server(80); 
 portMUX_TYPE ssrmux = portMUX_INITIALIZER_UNLOCKED;
@@ -67,13 +75,15 @@ uint32_t windowStartTime = 0;
 // Safety State
 double currentStepPeak = 0.0;
 double stepStartTemp = 0.0;
+double currentStepPeak2 = 0.0;
+double stepStartTemp2 = 0.0;
 
 SemaphoreHandle_t dataMutex;
 
 void setup() {
     Serial.begin(115200);
     delay(100);
-    Serial.println("\n[INIT] IllOvenOS v3.1");
+    Serial.println("\n[INIT] IllOvenOS v3.2");
 
     dataMutex = xSemaphoreCreateMutex();
     configASSERT(dataMutex); 
@@ -118,8 +128,11 @@ void setup() {
 
     myPID.SetOutputLimits(0, PID_WINDOW_SIZE);
     myPID.SetMode(MANUAL);
-    
     myPID.SetSampleTime(PID_WINDOW_SIZE);
+
+    outerPID.SetOutputLimits(-CASCADE_MAX_UNDERSHOOT, CASCADE_MAX_OVERSHOOT);
+    outerPID.SetMode(MANUAL);
+    outerPID.SetSampleTime(PID_WINDOW_SIZE);
 
     registerAPI();
     server.begin();

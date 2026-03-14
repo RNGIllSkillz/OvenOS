@@ -53,17 +53,18 @@ void registerAPI() {
     server.on("/status", HTTP_GET,[](AsyncWebServerRequest *request){
         if (!request->authenticate(WEB_USER, WEB_PASS)) return request->requestAuthentication();
         
-        char buf[512];
+        char buf[768];
         char msgBuf[64] = "busy";
         char profNameBuf[33] = "";
         long rssi = WiFi.RSSI();
         float cpuTemp = temperatureRead();
         
         double cInput = 0, cInput2 = 0, cSetpoint = 0, cKp = 0, cKi = 0, cKd = 0;
+        double cKpOut = 0, cKiOut = 0, cKdOut = 0, cCascadeDelta = 0;
         int cStep = -1, cSteps = 0;
         unsigned long cHold = 0;
         uint32_t cProcStart = 0, cRunStart = 0;
-        bool isRunning = false, isTimerActive = false, isEstop = false, isMon = false, cHasTC2 = false, cFan = false;
+        bool isRunning = false, isTimerActive = false, isEstop = false, isMon = false, cHasTC2 = false, cFan = false, cCascade = false;
         
         if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
             cInput = Input;
@@ -79,7 +80,11 @@ void registerAPI() {
             isMon = monitoring;
             cHasTC2 = hasTC2;
             cFan = fanState;
+            cCascade = cascadeMode;
+            cCascadeDelta = CascadeDelta;
+            
             cKp = PID_KP; cKi = PID_KI; cKd = PID_KD;
+            cKpOut = PID_OUTER_KP; cKiOut = PID_OUTER_KI; cKdOut = PID_OUTER_KD;
             
             strncpy(msgBuf, statusMsg, sizeof(msgBuf)-1);
             if (activeProfilePtr && profMode) {
@@ -103,19 +108,28 @@ void registerAPI() {
             timeLeft = (el < tot) ? (long)(tot - el) : 0L;
         }
         
+        double cAirTarget = cSetpoint;
+        if (cCascade && cHasTC2) {
+            cAirTarget += cCascadeDelta;
+            if (cAirTarget > SAFETY_MAX_TEMP) cAirTarget = SAFETY_MAX_TEMP;
+            if (cAirTarget < 0) cAirTarget = 0;
+        }
+        
         snprintf(buf, sizeof(buf),
             "{\"temp\":%.1f,\"temp2\":%.1f,\"hasTC2\":%s,\"fan\":%s,\"setpoint\":%.1f,\"msg\":\"%s\","
             "\"running\":%s,\"monitoring\":%s,\"profStep\":%d,\"profSteps\":%d,"
             "\"profName\":\"%s\",\"timeLeft\":%ld,\"holdMin\":%d,"
             "\"elapsed\":%lu,\"emergency\":%s,\"rssi\":%ld,"
-            "\"kp\":%.2f,\"ki\":%.3f,\"kd\":%.3f,\"cpuTemp\":%.1f}",
+            "\"kp\":%.2f,\"ki\":%.3f,\"kd\":%.3f,"
+            "\"kpOut\":%.2f,\"kiOut\":%.3f,\"kdOut\":%.3f,\"cascade\":%s,\"airTarget\":%.1f,\"cpuTemp\":%.1f}",
             cInput, cInput2, cHasTC2 ? "true" : "false", cFan ? "true" : "false", cSetpoint, msgBuf,
             isRunning ? "true" : "false",
             isMon ? "true" : "false",
             cStep, cSteps, profNameBuf, timeLeft, holdMinV, 
             (millis() - cRunStart) / 1000UL,
             isEstop ? "true" : "false",
-            rssi, cKp, cKi, cKd, cpuTemp
+            rssi, cKp, cKi, cKd,
+            cKpOut, cKiOut, cKdOut, cCascade ? "true" : "false", cAirTarget, cpuTemp
         );
         
         AsyncWebServerResponse *response = request->beginResponse(200, "application/json", String(buf));
@@ -147,12 +161,9 @@ void registerAPI() {
 
         size_t totalLen = 2 + (cnt * 8);
 
-        // Calculates bytes linearly from circular buffer directly into TCP packets!
         AsyncWebServerResponse *response = request->beginResponse("application/octet-stream", totalLen, 
             [cnt, head](uint8_t *buffer, size_t maxLen, size_t index) -> size_t {
                 size_t bytesWritten = 0;
-                
-                // Grab lock briefly just to copy the necessary bytes for this packet
                 if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(20)) != pdTRUE) return 0;
 
                 if (index < 2) {
@@ -267,6 +278,8 @@ void registerAPI() {
                 stepStartTemp = Input;    
                 currentStepPeak = Input;  
                 
+                CascadeDelta = 0;
+                
                 running = true;
                 strncpy(statusMsg, L_STATE_HEATING, sizeof(statusMsg)-1);
                 myPID.SetMode(AUTOMATIC);
@@ -312,7 +325,6 @@ void registerAPI() {
     server.on("/profiles", HTTP_GET,[](AsyncWebServerRequest *request){
         if (!request->authenticate(WEB_USER, WEB_PASS)) return request->requestAuthentication();
         
-        // Use String to build response cleanly without AsyncResponseStream fragments
         String json;
         json.reserve(1536);
         json += "[";
@@ -407,19 +419,23 @@ void registerAPI() {
         if (!request->authenticate(WEB_USER, WEB_PASS)) return request->requestAuthentication();
         if (!request->hasHeader("X-Oven-Auth")) { sendSafeResponse(request, 403, "CSRF"); return; }
         
-        double tkp = PID_KP, tki = PID_KI, tkd = PID_KD;
-        if (request->hasArg("kp")) tkp = request->arg("kp").toDouble();
-        if (request->hasArg("ki")) tki = request->arg("ki").toDouble();
-        if (request->hasArg("kd")) tkd = request->arg("kd").toDouble();
+        if (request->hasArg("kp")) PID_KP = request->arg("kp").toDouble();
+        if (request->hasArg("ki")) PID_KI = request->arg("ki").toDouble();
+        if (request->hasArg("kd")) PID_KD = request->arg("kd").toDouble();
         
-        if (tkp < 0.0 || tkp > 500.0 || tki < 0.0 || tki > 50.0 || tkd < 0.0 || tkd > 500.0) {
+        if (request->hasArg("kpOut")) PID_OUTER_KP = request->arg("kpOut").toDouble();
+        if (request->hasArg("kiOut")) PID_OUTER_KI = request->arg("kiOut").toDouble();
+        if (request->hasArg("kdOut")) PID_OUTER_KD = request->arg("kdOut").toDouble();
+        if (request->hasArg("cascade")) cascadeMode = (request->arg("cascade") == "1");
+        
+        if (PID_KP < 0 || PID_KP > 500 || PID_KI < 0 || PID_KI > 50 || PID_KD < 0 || PID_KD > 500 ||
+            PID_OUTER_KP < 0 || PID_OUTER_KP > 500 || PID_OUTER_KI < 0 || PID_OUTER_KI > 50 || PID_OUTER_KD < 0 || PID_OUTER_KD > 500) {
             sendSafeResponse(request, 400, "PID bounds err"); return;
         }
 
-        PID_KP = tkp; PID_KI = tki; PID_KD = tkd;
-        
         if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
             myPID.SetTunings(PID_KP, PID_KI, PID_KD);
+            outerPID.SetTunings(PID_OUTER_KP, PID_OUTER_KI, PID_OUTER_KD);
             xSemaphoreGive(dataMutex);
         }
         saveSettings(); 
